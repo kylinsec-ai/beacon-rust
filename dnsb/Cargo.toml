@@ -1,0 +1,18 @@
+[package]
+name = "dnsb"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "dnsb"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+beacon-core = { path = "../beacon-core" }
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Memory",
+    "Win32_System_SystemInformation",
+] }

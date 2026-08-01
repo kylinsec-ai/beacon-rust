@@ -1,0 +1,70 @@
+# =============================================================================
+# Rust workspace build output
+# =============================================================================
+
+# Cargo build output — all four DLL projects (beacon/dnsb/pivot/extc2) and the
+# shared beacon-core library land here.
+/target/
+
+# Cargo registry cache used by vendored builds
+/vendor/
+
+# =============================================================================
+# C++ / MSVC build output (beacon.sln, *.vcxproj) — kept for reference sources
+# vendored into this workspace
+# =============================================================================
+
+# intermediate + output files
+*.obj
+*.o
+*.pdb
+*.ilk
+*.idb
+*.exp
+*.res
+*.pgc
+*.pgd
+*.pchi
+*.ipdb
+*.iobj
+*.tlog
+*.lastbuildstate
+*.log
+*.manifest
+*.dll.manifest
+*.dll
+*.embed.manifest
+*.embed.manifest.res
+*.ncb
+*.sdf
+*.opensdf
+*.suo
+*.user
+*.vcxproj.filters.user
+*.VC.db
+*.VC.opendb
+*.aps
+*.tmp
+
+# Static libraries that are build output
+*.lib
+
+# =============================================================================
+# IDE / editor
+# =============================================================================
+
+.vs/
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+
+# =============================================================================
+# OS
+# =============================================================================
+
+Thumbs.db
+Desktop.ini
+.DS_Store
