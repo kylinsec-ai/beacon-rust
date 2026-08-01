@@ -1,3 +1,13 @@
+//! Beacon 核心库 —— Cobalt Strike Beacon C++ 源码的 Rust 移植。
+//!
+//! 模块布局与 `src/*.cpp` 一一对应，每个模块都标注了所移植的 C++ 文件。
+//! 线格式与加密与原始实现字节级兼容（AES-128-CBC + 截断 HMAC-SHA256、
+//! RSA PKCS#1 v1.5、Malleable C2 转换）。
+//!
+//! C API 按函数逐一对齐：许多 `command_*(buffer, length)` 签名保留了 C++
+//! 中同样忽略的参数（边界检查或空函数体）。这些有意的镜像会触发
+//! `unused_variables`；下面的 allow 属性只针对移植的 API 形态。
+//!
 //! Beacon core library — Rust port of the Cobalt Strike Beacon C++ source.
 //!
 //! Mirrors the module layout of `src/*.cpp`. Each module is documented with

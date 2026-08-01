@@ -1,9 +1,11 @@
+//! 文件递归（recurse.cpp）。
 //! File recursion (recurse.cpp).
 
 use windows_sys::Win32::Storage::FileSystem::{
     FindClose, FindFirstFileA, FindNextFileA, WIN32_FIND_DATAA, FILE_ATTRIBUTE_DIRECTORY,
 };
 
+/// 文件递归回调（RCALLBACK）。
 /// File recursion callback (RCALLBACK).
 pub type RCallback = fn(&[u8], &[u8], bool);
 
@@ -30,8 +32,10 @@ fn walk_parent(parent: &[u8], callback: RCallback) {
             }
             let name: &[u8] = std::slice::from_raw_parts(name_bytes.as_ptr() as *const u8, name_len);
 
+            // 跳过 . 和 ..
             // skip . and ..
             if name == b"." || name == b".." {
+                // 继续（跳过，不做处理）
                 // continue
             } else {
                 let is_dir = (ffd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)
@@ -48,6 +52,7 @@ fn walk_parent(parent: &[u8], callback: RCallback) {
     }
 }
 
+/// 递归遍历目录（recurse）。
 /// Recurse through a directory (recurse).
 pub fn recurse(start: &[u8], callback: RCallback) {
     walk_parent(start, callback);

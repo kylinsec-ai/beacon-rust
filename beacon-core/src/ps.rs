@@ -1,3 +1,4 @@
+//! 列出和终止进程（ps.cpp）。
 //! List and kill processes (ps.cpp).
 
 use crate::bformat::FormatP;
@@ -24,6 +25,7 @@ pub fn command_ps_kill(buffer: &[u8], length: usize) {
     unsafe {
         let h = OpenProcess(PROCESS_TERMINATE, 0, pid);
         if !h.is_null() && TerminateProcess(h, 0) != 0 {
+            // 无需处理，一切正常
             // do nothing, we're good
         } else {
             post_error_dd(0x23, pid as i32, GetLastError() as i32);
@@ -34,6 +36,7 @@ pub fn command_ps_kill(buffer: &[u8], length: usize) {
     }
 }
 
+/// 获取进程的用户名。
 /// Get the username for a process.
 fn ps_getusername(h_process: HANDLE, buffer: &mut [u8]) -> bool {
     let mut h_token: HANDLE = std::ptr::null_mut();
@@ -47,6 +50,7 @@ fn ps_getusername(h_process: HANDLE, buffer: &mut [u8]) -> bool {
     result
 }
 
+/// 检查进程是否为 x64。
 /// Check if a process is x64 or not.
 pub fn is_x64_process(process: isize) -> bool {
     if is_x64() || is_wow64(unsafe { GetCurrentProcess() } as isize) {
@@ -64,6 +68,7 @@ pub fn command_ps_list(buffer: &[u8], length: usize, callback: Callback) {
         format.bformat_int(reqid as i32);
     }
 
+    // 检查我们是哪种进程（架构）
     // check what kind of process we are
     let native: &[u8] = if is_wow64(unsafe { GetCurrentProcess() } as isize) {
         b"x64"
@@ -74,6 +79,7 @@ pub fn command_ps_list(buffer: &[u8], length: usize, callback: Callback) {
     };
 
     unsafe {
+        // 对系统中所有进程拍快照
         // take a snapshot of all processes in the system
         let h_snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if h_snap == INVALID_HANDLE_VALUE {
@@ -117,7 +123,7 @@ pub fn command_ps_list(buffer: &[u8], length: usize, callback: Callback) {
 
                 let mut sessid: u32 = 0;
                 if ProcessIdToSessionId(pe32.th32ProcessID, &mut sessid) == 0 {
-                    sessid = u32::MAX; // -1
+                    sessid = u32::MAX; // -1（获取失败）/ -1 (failed to get session id)
                 }
 
                 let arch: &[u8] = if is_wow64(h_process as isize) { b"x86" } else { native };

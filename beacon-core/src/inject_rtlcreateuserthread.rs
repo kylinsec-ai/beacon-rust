@@ -1,3 +1,5 @@
+//! 移植自 src/inject_rtlcreateuserthread.cpp —— 通过原生
+//! RtlCreateUserThread 创建远程线程。
 //! Port of src/inject_rtlcreateuserthread.cpp — remote thread creation via
 //! the native RtlCreateUserThread.
 
@@ -5,6 +7,7 @@ use std::ffi::c_void;
 use windows_sys::Win32::Foundation::HANDLE;
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 
+/// CLIENT_ID 结构体：PVOID UniqueProcess；PVOID UniqueThread。
 /// CLIENT_ID { PVOID UniqueProcess; PVOID UniqueThread; }.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -13,6 +16,9 @@ struct ClientId {
     unique_thread: *mut c_void,
 }
 
+/// RtlCreateUserThread 的函数原型：
+/// NTSTATUS RtlCreateUserThread(HANDLE, PSECURITY_DESCRIPTOR, BOOLEAN,
+/// ULONG, PULONG, PULONG, PVOID, PVOID, PHANDLE, CLIENT_ID*)。
 /// NTSTATUS RtlCreateUserThread(HANDLE, PSECURITY_DESCRIPTOR, BOOLEAN,
 /// ULONG, PULONG, PULONG, PVOID, PVOID, PHANDLE, CLIENT_ID*).
 type RtlCreateUserThread = unsafe extern "system" fn(
@@ -28,6 +34,7 @@ type RtlCreateUserThread = unsafe extern "system" fn(
     *mut ClientId,
 ) -> i32;
 
+/// 通过 RtlCreateUserThread 创建远程线程（inject_via_createuserthread）。
 /// Create a remote thread via RtlCreateUserThread
 /// (inject_via_createuserthread).
 pub fn inject_via_createuserthread(h_process: isize, lp_start_address: *mut c_void, lp_parameter: *mut c_void) -> bool {
@@ -46,8 +53,8 @@ pub fn inject_via_createuserthread(h_process: isize, lp_start_address: *mut c_vo
         func(
             h_process as HANDLE,
             std::ptr::null_mut(),
-            0, /* CreateSuspended = FALSE */
-            0, /* StackZeroBits */
+            0, /* CreateSuspended = FALSE：不挂起 */
+            0, /* StackZeroBits：栈零位 */
             std::ptr::null_mut(),
             std::ptr::null_mut(),
             lp_start_address,

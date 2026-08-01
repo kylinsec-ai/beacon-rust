@@ -1,11 +1,14 @@
+//! 编码器（encoders.cpp）——netbios、base64url、xor。
 //! Encoders (encoders.cpp) — netbios, base64url, xor.
 //!
+//! 与 LibTomCrypt 的 base64 签名兼容：这里的 base64 变换使用相同的线编码。
 //! Compatible with LibTomCrypt's base64 signatures: the base64 transforms
 //! here use the same wire encoding.
 
 use crate::beacon::bigger_rand;
 use base64::Engine;
 
+/// 用基础偏移（`'a'` 或 `'A'`）将 `src` NetBIOS 编码到 `dst`。返回写入的字节数。
 /// NetBIOS-encode `src` into `dst` with a base offset (`'a'` or `'A'`).
 /// Returns the number of bytes written.
 pub fn netbios_encode(base: u8, src: &[u8], dst: &mut [u8], maxlength: usize) -> usize {
@@ -22,8 +25,10 @@ pub fn netbios_encode(base: u8, src: &[u8], dst: &mut [u8], maxlength: usize) ->
     y
 }
 
+/// 将 `src` NetBIOS 解码到 `dst`。返回写入的字节数。
 /// NetBIOS-decode `src` into `dst`. Returns the number of bytes written.
 pub fn netbios_decode(base: u8, src: &[u8], dst: &mut [u8], maxlength: usize) -> usize {
+    // NetBIOS 编码文本应*始终*为偶数长度
     // NetBIOS encoded text should *always* be even length
     if (src.len() % 2) == 1 {
         return 0;
@@ -40,6 +45,7 @@ pub fn netbios_decode(base: u8, src: &[u8], dst: &mut [u8], maxlength: usize) ->
     src.len() / 2
 }
 
+/// Base64url 编码（RFC 4648 URL 安全，无填充）。
 /// Base64url-encode (RFC 4648 URL-safe, no padding).
 pub fn base64url_encode(inp: &[u8], out: &mut [u8]) -> usize {
     let engine = base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -49,9 +55,11 @@ pub fn base64url_encode(inp: &[u8], out: &mut [u8]) -> usize {
     n
 }
 
+/// Base64url 解码。`max` 限制解码长度。返回解码长度或失败时返回 0。
 /// Base64url-decode. `max` bounds the decoded length. Returns the decoded
 /// length or 0 on failure.
 pub fn base64url_decode(inp: &[u8], max: usize, out: &mut [u8]) -> usize {
+    // 将 URL 安全形式变换回标准 base64
     // transform URL-safe back to standard base64
     let mut work = inp.to_vec();
     for b in work.iter_mut() {
@@ -61,6 +69,7 @@ pub fn base64url_decode(inp: &[u8], max: usize, out: &mut [u8]) -> usize {
             *b = b'+';
         }
     }
+    // 恢复填充
     // restore padding
     while (work.len() % 4) != 0 {
         if work.len() > max {
@@ -80,9 +89,11 @@ pub fn base64url_decode(inp: &[u8], max: usize, out: &mut [u8]) -> usize {
     }
 }
 
+/// XOR 编码：前置一个 4 字节随机 nonce（即密钥），然后用 nonce 字节循环 XOR 数据。返回编码后的长度。
 /// XOR-encode: prepend a 4-byte random nonce (the key), then XOR the data
 /// with the nonce bytes cyclically. Returns the encoded length.
 pub fn xor_encode(src: &[u8], dst: &mut [u8], maxlength: usize) -> usize {
+    // 检查 maxlength 是否安全
     // check if maxlength is safe
     if (src.len() + 4) > maxlength {
         return 0;
@@ -97,11 +108,13 @@ pub fn xor_encode(src: &[u8], dst: &mut [u8], maxlength: usize) -> usize {
     src.len() + 4
 }
 
+/// XOR 解码：从前面读取 4 字节密钥，然后撤销 XOR。
 /// XOR-decode: read the 4-byte key from the front, then undo the XOR.
 pub fn xor_decode(src: &[u8], dst: &mut [u8], maxlength: usize) -> usize {
     if src.len() < 4 {
         return 0;
     }
+    // 对长度做健全性检查
     // sanity check on the length
     if (src.len() - 4) > maxlength {
         return 0;

