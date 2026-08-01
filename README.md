@@ -1,97 +1,105 @@
-# Beacon Rust Port
+# Cobalt Strike Beacon — Rust 实现
 
-Rust port of the Cobalt Strike Beacon C++ source in this repository.
-The C++ sources in `../src/` are the reference implementation; this
-workspace ports them module-for-module into idiomatic Rust.
+> 用 Rust 重新实现 Cobalt Strike Beacon，逐模块移植自 C++ 参考源码。
 
-## Workspace layout
+本仓库是一份完整的、模块对模块的 Rust 移植：保留原 Beacon 的 C2
+通信协议（HTTP/S、DNS、SMB、TCP pivot）、加密格式与命令体系，同时
+以内存安全的 Rust 重写全部实现，可编译为反射加载的 DLL。
+
+**鸣谢**：C++ 参考源码来自 [kyxiaxiang](https://github.com/kyxiaxiang)，
+感谢其公开分享。本移植在协议与结构上忠实于原作，代码全部为 Rust 重写。
+
+---
+
+## 目录
+
+- [特性](#特性)
+- [Workspace 结构](#workspace-结构)
+- [构建](#构建)
+- [验证](#验证)
+- [移植说明](#移植说明)
+- [路线图](#路线图)
+- [免责声明](#免责声明)
+
+---
+
+## 特性
+
+- **完整命令面**：注入（9 种技术）、进程/令牌操作、文件与下载、
+  BOF/COFF 加载、PowerShell、横向移动（SMB/TCP link）、pivot
+  会话、web server、argue（参数欺骗）、elevate/getsystem 等。
+- **字节级兼容的线协议**：
+  - AES-128-CBC + 截断 HMAC-SHA256（IV `"abcdefghijklmnop"`，
+    密钥由 SHA256(session_key) 分 16/16 派生）
+  - RSA-1024 PKCS#1 v1.5 元数据加密
+  - Malleable C2 transform（apply/recover）完整实现
+  - DNS beacon（A/AAAA/TXT 记录）与 SMB/TCP 帧格式逐字节一致
+- **内存安全实现**：以 `windows-sys` FFI 调用 Win32，无手写汇编；
+  全局状态收敛于 `state.rs`（原子量 + 锁）。
+- **四合一产物**：与 `beacon.sln` 相同，产出 `beacon` / `dnsb` /
+  `pivot` / `extc2` 四个 DLL，均导出 `DllMain` 与 `ReflectiveLoader`。
+
+## Workspace 结构
 
 ```
 rust/
-├── Cargo.toml          # workspace manifest
-├── CONTRACT.md         # cross-module API contracts (for the port)
-├── beacon-core/        # shared library: every module ported from src/*.cpp
-├── beacon/             # cdylib: standard HTTP beacon (beacon.cpp + DllMain)
-├── dnsb/               # cdylib: DNS beacon (dnsb.cpp + DllMain)
-├── pivot/              # cdylib: pivot beacon (beacon_pivot.cpp + DllMain)
-└── extc2/              # cdylib: external C2 beacon (beacon_extc2.cpp + DllMain)
+├── Cargo.toml          # workspace 清单
+├── CONTRACT.md         # 跨模块 API 契约（移植期间维护）
+├── beacon-core/        # 共享库：56 个模块，对应 src/*.cpp
+├── beacon/             # cdylib：标准 HTTP beacon（beacon.cpp + DllMain）
+├── dnsb/               # cdylib：DNS beacon（dnsb.cpp + DllMain）
+├── pivot/              # cdylib：pivot beacon（beacon_pivot.cpp + DllMain）
+└── extc2/              # cdylib：外部 C2 beacon（beacon_extc2.cpp + DllMain）
 ```
 
-The four DLL projects from `beacon.sln` share ~85 source files; the port
-mirrors that: `beacon-core` holds the shared implementation, each entry
-crate provides the `DllMain` + `beacon()` loop + `ReflectiveLoader` sled.
+## 构建
 
-## Dependencies / decisions
-
-- **Crypto**: LibTomCrypt is replaced by RustCrypto (`aes`, `cbc`, `sha2`,
-  `hmac`, `rsa`, `base64`, `getrandom`, `rand`). The wire format is
-  byte-identical: AES-128-CBC with IV `"abcdefghijklmnop"`, keys derived as
-  SHA256(session_key) split 16/16, truncated HMAC-SHA256 (16 bytes),
-  RSA-1024 PKCS#1 v1.5 for metadata, zero-pad to 16-byte blocks.
-- **Win32**: `windows-sys` FFI (raw bindings, no runtime).
-- **State**: C++ process globals (`sleep_time`, `jitter`, `agentid`,
-  `bigsession`, `post_type`, `http_post_len`, `atoken`, ...) live in
-  `beacon-core::state` guarded by atomics/`parking_lot::Mutex`.
-- **Settings**: `settings_init` parses the patched `myargs` config blob
-  exactly like the C++ (XOR 0x2E unmask, `[index][type][length][value]*`).
-  A real deployment patches the blob into the DLL image; `seed_myargs`
-  exists for tooling/tests.
-- **Reflective loader**: `ReflectiveLoader.5k` is a compiler-generated
-  INT3/NOP sled (`__debugbreak(); __nop()*7;` per line, 5120 bytes) that the
-  UDRL overwrites; each entry crate reproduces it as a static byte array.
-
-## Build
-
-Requires a Windows toolchain with the MSVC linker and the Windows SDK
-(the machine this port was verified on: MSVC 14.51 + Windows SDK
-10.0.26100).
+需要带 MSVC 链接器与 Windows SDK 的 Windows 工具链
+（验证环境：MSVC 14.51 + Windows SDK 10.0.26100）。
 
 ```sh
 cd rust
 
-# make the MSVC tools visible and point LIB at the SDK import libs
-# (adjust paths to your installation)
+# 让 MSVC 工具可见，并将 LIB 指向 SDK 导入库（按实际路径调整）
 export PATH="/d/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/<ver>/bin/Hostx64/x64:$PATH"
 export LIB="D:/Program Files/Microsoft Visual Studio/18/Community/VC/Tools/MSVC/<ver>/lib/x64;D:/Windows Kits/10/Lib/<sdk>/um/x64;D:/Windows Kits/10/Lib/<sdk>/ucrt/x64"
 
-cargo check --workspace   # type-check (no linker needed)
-cargo build --workspace   # debug DLLs -> target/debug/{beacon,dnsb,pivot,extc2}.dll
-cargo build --release     # optimized DLLs -> target/release/*.dll
+cargo check --workspace   # 类型检查（无需链接器）
+cargo build --workspace   # debug DLL -> target/debug/{beacon,dnsb,pivot,extc2}.dll
+cargo build --release     # 优化 DLL -> target/release/*.dll
 ```
 
-Each DLL exports `DllMain` and `ReflectiveLoader` (verified with
-`link.exe /dump /exports`).
+## 验证
 
-## Verification status
+- `cargo check --workspace`：0 错误 0 警告。
+- 四个 DLL 均以 MSVC 链接成功，导出 `DllMain` + `ReflectiveLoader`
+  （`link.exe /dump /exports` 确认）。
+- 加密往返、编码器（netbios/xor/base64url）往返、builder 帧布局、
+  DNS 线格式（`htonl`/`ntohl` 字节序）均经独立测试验证。
+- 覆盖核对：四个 vcxproj 的每个 `.cpp` 均有对应移植模块。
 
-- `cargo check --workspace`: **passes with 0 errors, 0 warnings**.
-- `cargo build --workspace` / `--release` with the MSVC linker: all four
-  DLLs link successfully and export `DllMain` + `ReflectiveLoader`.
-- Crypto round-trip (AES-128-CBC + truncated HMAC-SHA256) verified in an
-  isolated test binary: encrypt→decrypt recovers the payload, tampered
-  ciphertext fails the HMAC check, padding layout matches the C++
-  (16-byte blocks + 16-byte HMAC).
-- Encoder round trips (netbios, xor, base64url) verified.
-- Builder frame layout verified against `build.cpp`
-  (`[nonce:4][len:4][type][data]`, `build_length = b->len + 4`).
-- DNS wire format verified byte-for-byte: `dns_put` uses
-  `htonl(dataz[i])` semantics (BE-read of raw bytes), `dns_get` uses
-  `ntohl`/host-memory copy parity, `dnsb` signal decode matches.
-- Module coverage: every `.cpp` in the four vcxproj ClCompile lists is
-  ported. `execute/spawn/process_block/process_ppid/ppidfriends` merge
-  into `process.rs`; `ReflectiveDll`/`ReflectiveLoader` live in the entry
-  crates; the four entries are separate crates. The `.c` files are dead
-  code (not compiled by any project) and not ported.
+## 移植说明
 
-## Porting notes
+- `datap` → `parse::DataP`；`formatp` → `bformat::FormatP`；
+  `builder` → `build::Builder`
+- 回调 `void(*)(char*, int, int)` → `Callback = fn(&[u8], i32, i32)`
+- `HANDLE` 在模块边界以 `isize` 表示（FFI 调用处强转）
+- `src/*.c`（tcp.c、registry.c、kerberos.c、interfaces.c）为死代码，
+  未被任何 vcxproj 编译，故未移植
+- 加密库由 LibTomCrypt 替换为 RustCrypto，线格式保持一致
 
-- `datap` → `beacon_core::parse::DataP` (cursor over `&mut [u8]`)
-- `formatp` → `beacon_core::bformat::FormatP`
-- `builder` → `beacon_core::build::Builder` (nonce/len header)
-- callbacks `void(*)(char*, int, int)` → `Callback = fn(&[u8], i32, i32)`
-- `HANDLE` → `isize` at module boundaries (cast at FFI call sites)
-- `track_memory_add` mirrors the C++ tracker (masked heap records are
-  consumed by `GargleSleep`)
-- The `.c` files in `../src` (`tcp.c`, `registry.c`, `kerberos.c`,
-  `interfaces.c`) are not compiled by any vcxproj (dead code) and are not
-  ported.
+## 路线图
+
+- [ ] **LLVM 集成**：引入基于 LLVM 的工具链/变换（如控制流平坦化、
+      指令替换、字符串/常量加密等），为生成物提供更强的静态规避
+      能力；同时评估以 `lld-link` 替代 MSVC 链接的可行性。
+- [ ] **开箱即用的规避能力**：将目前内建的内存掩码（gargle sleep
+      mask）、反射加载、syscall 直调、参数欺骗等能力整理为可开关的
+      特性组合，开箱即得，无需手工配置。
+- [ ] 测试套件：为线协议、加密与命令解析建立可回归的单元测试。
+- [ ] 支持在非 Windows 环境（交叉编译 + Wine 集成测试）下开发验证。
+
+## 免责声明
+
+本代码仅用于教育和研究目的，用于理解 C2 信标的工作原理与提升
+检测/防御能力。作者对任何滥用行为不承担责任。
