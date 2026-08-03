@@ -94,11 +94,11 @@ cargo build --release     # optimized DLLs -> target/release/*.dll
 
 ## Roadmap
 
-- [ ] **LLVM integration**: introduce LLVM-based toolchain/transforms
-      (control-flow flattening, instruction substitution,
-      string/constant encryption, etc.) for stronger static evasion of
-      the artifacts; also evaluate replacing the MSVC linker with
-      `lld-link`.
+- [x] **LLVM/OLLVM integration** (done): `lld-link` linking verified; the
+      OLLVM toolchain (Obfuscator-Rust, LLVM 21 + Rust 1.92) built via
+      Docker, `tools/ollvm_build.sh` produces obfuscated DLLs in one
+      shot (string encryption + instruction substitution + bogus control
+      flow).
 - [ ] **Out-of-the-box evasion**: package the built-in memory masking
       (gargle sleep mask), reflective loading, direct syscalls, and
       argument spoofing into toggleable feature sets, usable as-is

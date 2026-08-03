@@ -82,9 +82,10 @@ cargo build --release     # 优化 DLL -> target/release/*.dll
 
 ## 路线图
 
-- [ ] **LLVM 集成**：引入基于 LLVM 的工具链/变换（如控制流平坦化、
-      指令替换、字符串/常量加密等），为生成物提供更强的静态规避
-      能力；同时评估以 `lld-link` 替代 MSVC 链接的可行性。
+- [x] **LLVM/OLLVM 集成**（已完成）：`lld-link` 链接已验证；OLLVM 混淆
+      工具链（Obfuscator-Rust，LLVM 21 + Rust 1.92）经 Docker 构建，
+      `tools/ollvm_build.sh` 一键产出混淆 DLL（字符串加密 + 指令替换 +
+      虚假控制流）。
 - [ ] **开箱即用的规避能力**：将目前内建的内存掩码（gargle sleep
       mask）、反射加载、syscall 直调、参数欺骗等能力整理为可开关的
       特性组合，开箱即得，无需手工配置。

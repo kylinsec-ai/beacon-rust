@@ -1,2 +1,16 @@
+# =============================================================================
+# Cargo 链接配置 / Cargo linker configuration
+#
+# 默认使用 MSVC link.exe（经 PATH + LIB 环境变量提供，见 README）。
+# Default: MSVC link.exe (provided via PATH + LIB env vars, see README).
+#
+# 可选：LLVM lld-link（rust-lld 复制改名，加入 PATH 即可）
+# Optional: LLVM lld-link (copy rust-lld as lld-link.exe onto PATH):
+#   linker = "lld-link.exe"
+# 可选：OLLVM 交叉目标（tools/ollvm_build.sh 内部覆盖此配置）
+# Optional: OLLVM cross target (overridden inside tools/ollvm_build.sh):
+#   [target.x86_64-pc-windows-gnu]
+#   linker = "x86_64-w64-mingw32-gcc"
+# =============================================================================
 [target.x86_64-pc-windows-msvc]
 linker = "link.exe"

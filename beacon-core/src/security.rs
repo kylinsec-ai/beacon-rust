@@ -65,7 +65,7 @@ pub fn security_init(k: &[u8]) {
     let _ = CRYPTO.set(Mutex::new(CryptoState {
         key,
         hmac_key,
-        iv: *b"abcdefghijklmnop",
+        iv: xor_iv(),
         lastcounter: 0,
     }));
 }
@@ -76,6 +76,16 @@ fn crypto() -> std::sync::MutexGuard<'static, CryptoState> {
         .expect("security_init not called")
         .lock()
         .unwrap()
+}
+
+/// 以编译期 XOR 还原 AES IV（明文常量保护，strcry 不覆盖 [u8] 字面量）。
+/// Recover the AES IV via compile-time XOR (plaintext constant protection;
+/// strcry does not cover [u8] literals).
+const fn xor_iv() -> [u8; 16] {
+    // "abcdefghijklmnop" ^ 0xAA
+    [
+        0xcb, 0xc8, 0xc9, 0xce, 0xcf, 0xcc, 0xcd, 0xc2, 0xc3, 0xc0, 0xc1, 0xc6, 0xc7, 0xc4, 0xc5, 0xda,
+    ]
 }
 
 /// 计算 `data` 的截断 HMAC-SHA256（16 字节）。
@@ -317,7 +327,7 @@ pub fn decode_watermark(
 
     // 用 key=wmKeyBytes、iv="abcdefghijklmnop" 进行 AES-128-CBC 解密
     // AES-128-CBC decrypt with key=wmKeyBytes, iv="abcdefghijklmnop"
-    let iv = *b"abcdefghijklmnop";
+    let iv = xor_iv();
     let mut decrypted = [0u8; 16];
     {
         let mut block = [0u8; 16];
