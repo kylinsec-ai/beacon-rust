@@ -1,17 +1,18 @@
-# Cobalt Strike Beacon — Rust 实现
+ <div align="center">
 
-> 用 Rust 重新实现 Cobalt Strike Beacon，逐模块移植自 C++ 参考源码。
->
-> [English Version](README_EN.md) | [英文版](README_EN.md)
+# Cobalt Strike Beacon — Rust Research Port
 
-## 简介
+**Systems Engineering · Protocol Compatibility · Reverse Engineering**
 
-Cobalt Strike Beacon 的完整、逐模块 Rust 移植。保留原 Beacon 的 C2
-通信协议（HTTP/S、DNS、SMB、TCP pivot）、加密格式与命令体系，同时
-以内存安全的 Rust 重写全部实现，可编译为反射加载的 DLL。
+A module-oriented Rust porting study focused on implementation structure, protocol behavior, and reproducible verification.
 
-**鸣谢**：C++ 参考源码来自 [kyxiaxiang](https://github.com/kyxiaxiang)，
-感谢其公开分享。本移植在协议与结构上忠实于原作，代码全部为 Rust 重写。
+[English](README_EN.md) · [简体中文](README.md)
+
+</div>
+
+> **Research notice:** For education and authorized security research. This project is based on publicly available reference source; respect upstream rights and applicable licenses.
+
+---
 
 ## 特性
 
