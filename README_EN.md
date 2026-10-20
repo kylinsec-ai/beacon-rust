@@ -1,22 +1,18 @@
-# Cobalt Strike Beacon — Rust Implementation
+<div align="center">
 
-> A Rust reimplementation of the Cobalt Strike Beacon, ported
-> module-for-module from the C++ reference source.
->
-> [中文版](README.md) | [Chinese Version](README.md)
+# Cobalt Strike Beacon — Rust Research Port
 
-## Introduction
+**Systems Engineering · Protocol Compatibility · Reverse Engineering**
 
-A complete, module-for-module Rust port of the Cobalt Strike Beacon. It
-keeps the original C2 wire protocols (HTTP/S, DNS, SMB, TCP pivot), the
-crypto formats, and the command set, while rewriting the whole
-implementation in memory-safe Rust and compiling to reflectively loadable
-DLLs.
+A module-oriented Rust porting study focused on implementation structure, protocol behavior, and reproducible verification.
 
-**Credits**: the C++ reference source comes from
-[kyxiaxiang](https://github.com/kyxiaxiang) — thanks for making it
-public. This port is faithful to the original protocols and structure;
-all code is rewritten in Rust.
+[English](README_EN.md) · [简体中文](README.md)
+
+</div>
+
+> **Research notice:** For education and authorized security research. This project is based on publicly available reference source; respect upstream rights and applicable licenses.
+
+---
 
 ## Features
 
