@@ -1,16 +1,16 @@
- <div align="center">
+<div align="center">
 
-# Cobalt Strike Beacon — Rust Research Port
+# Cobalt Strike Beacon — Rust 实现
 
-**Systems Engineering · Protocol Compatibility · Reverse Engineering**
+**系统工程 · 协议兼容性 · 逆向研究**
 
-A module-oriented Rust porting study focused on implementation structure, protocol behavior, and reproducible verification.
+围绕模块结构、协议行为与可复现验证开展的 Rust 移植研究。
 
 [English](README_EN.md) · [简体中文](README.md)
 
 </div>
 
-> **Research notice:** For education and authorized security research. This project is based on publicly available reference source; respect upstream rights and applicable licenses.
+> **研究声明：** 本项目用于教育与授权安全研究。项目基于公开可用的参考源码，请尊重上游权利与适用许可证。
 
 ---
 
